@@ -109,7 +109,7 @@ fun DownloadsScreen(
                         )
                         Spacer(modifier = Modifier.height(8.dp))
                         Text(
-                            text = "Salin link video TikTok dan unduh secara gratis tanpa watermark.",
+                            text = "Salin link video atau foto (TikTok, Instagram, YouTube, Facebook) dan unduh secara gratis.",
                             style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             textAlign = androidx.compose.ui.text.style.TextAlign.Center
@@ -128,7 +128,11 @@ fun DownloadsScreen(
                         DownloadItemCard(
                             item = item,
                             onPlayClick = {
-                                viewModel.openPlayer(PlayerTarget.LocalFile(item))
+                                if (item.type == DownloadType.PHOTO) {
+                                    viewModel.openInSystem(item)
+                                } else {
+                                    viewModel.openPlayer(PlayerTarget.LocalFile(item))
+                                }
                             },
                             onShareClick = {
                                 viewModel.shareItem(item)

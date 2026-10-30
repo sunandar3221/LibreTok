@@ -303,6 +303,7 @@ fun HomeScreen(
                     media = mediaPreview!!,
                     activeDownloads = activeDownloads,
                     onDownloadClick = { type -> viewModel.startDownload(type) },
+                    onDownloadSelectedPhotos = { urls -> viewModel.downloadSelectedPhotos(urls) },
                     onCancelDownload = { downloadId -> viewModel.cancelDownload(downloadId) },
                     onPreviewClick = {
                         viewModel.openPlayer(PlayerTarget.StreamPreview(mediaPreview!!))

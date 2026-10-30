@@ -47,6 +47,16 @@ class DownloadManager(
         media: TikTokMedia,
         type: DownloadType
     ): Result<DownloadItem> = withContext(Dispatchers.IO) {
+        if (type == DownloadType.PHOTO) {
+            val list = if (media.images.isNotEmpty()) media.images else listOf(media.coverUrl)
+            val result = downloadPhotos(media, list)
+            return@withContext if (result.isSuccess && result.getOrNull()?.isNotEmpty() == true) {
+                Result.success(result.getOrNull()!!.first())
+            } else {
+                Result.failure(result.exceptionOrNull() ?: Exception("Gagal mengunduh foto"))
+            }
+        }
+
         val downloadId = "${media.id}_${type.name}_${System.currentTimeMillis()}"
         val targetUrl = when (type) {
             DownloadType.VIDEO -> media.videoUrl
@@ -244,6 +254,167 @@ class DownloadManager(
                     errorMessage = e.localizedMessage ?: "Terjadi kesalahan saat mengunduh"
                 )
             )
+            Result.failure(e)
+        }
+    }
+
+    suspend fun downloadPhotos(
+        media: TikTokMedia,
+        photoUrls: List<String>
+    ): Result<List<DownloadItem>> = withContext(Dispatchers.IO) {
+        val urlsToDownload = photoUrls.filter { it.isNotBlank() }
+        if (urlsToDownload.isEmpty()) {
+            return@withContext Result.failure(Exception("Tidak ada foto yang valid untuk diunduh."))
+        }
+
+        val downloadId = "${media.id}_PHOTO_${System.currentTimeMillis()}"
+        val baseTitle = sanitizeFilename(media.title.ifBlank { "${media.platform}_${media.id}" })
+        val totalCount = urlsToDownload.size
+
+        updateActiveDownload(
+            ActiveDownload(
+                id = downloadId,
+                title = "${media.title} (0/$totalCount Foto)",
+                type = DownloadType.PHOTO,
+                progress = 0f,
+                bytesDownloaded = 0L,
+                totalBytes = totalCount.toLong(),
+                status = DownloadStatus.DOWNLOADING
+            )
+        )
+
+        val downloadedItems = mutableListOf<DownloadItem>()
+
+        try {
+            val ext = "jpg"
+            val mimeType = "image/jpeg"
+            val subDir = Environment.DIRECTORY_PICTURES + "/LibreTok"
+            val collectionUri = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                MediaStore.Images.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY)
+            } else {
+                MediaStore.Images.Media.EXTERNAL_CONTENT_URI
+            }
+
+            for ((index, photoUrl) in urlsToDownload.withIndex()) {
+                if (cancelledTasks[downloadId] == true) {
+                    cancelledTasks.remove(downloadId)
+                    removeActiveDownload(downloadId)
+                    return@withContext Result.failure(Exception("Unduhan foto dibatalkan"))
+                }
+
+                val fileName = "LibreTok_${baseTitle}_${index + 1}_of_${totalCount}_${System.currentTimeMillis()}.$ext"
+                val request = Request.Builder()
+                    .url(photoUrl)
+                    .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64)")
+                    .header("Referer", media.originalUrl)
+                    .build()
+
+                val response = client.newCall(request).execute()
+                if (!response.isSuccessful) {
+                    continue
+                }
+
+                val body = response.body ?: continue
+                val totalBytes = body.contentLength().coerceAtLeast(1L)
+                var bytesCopied = 0L
+
+                val savedFile: File
+                val savedUri: Uri?
+
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                    val contentValues = ContentValues().apply {
+                        put(MediaStore.MediaColumns.DISPLAY_NAME, fileName)
+                        put(MediaStore.MediaColumns.MIME_TYPE, mimeType)
+                        put(MediaStore.MediaColumns.RELATIVE_PATH, subDir)
+                        put(MediaStore.MediaColumns.IS_PENDING, 1)
+                    }
+
+                    val uri = context.contentResolver.insert(collectionUri, contentValues)
+                        ?: continue
+                    savedUri = uri
+
+                    context.contentResolver.openOutputStream(uri).use { outStream ->
+                        if (outStream != null) {
+                            val buffer = ByteArray(8192)
+                            var read: Int
+                            val inStream = body.byteStream()
+                            while (inStream.read(buffer).also { read = it } != -1) {
+                                if (cancelledTasks[downloadId] == true) {
+                                    break
+                                }
+                                outStream.write(buffer, 0, read)
+                                bytesCopied += read
+                            }
+                            outStream.flush()
+                        }
+                    }
+
+                    contentValues.clear()
+                    contentValues.put(MediaStore.MediaColumns.IS_PENDING, 0)
+                    context.contentResolver.update(uri, contentValues, null, null)
+
+                    savedFile = File(
+                        Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_PICTURES),
+                        "LibreTok/$fileName"
+                    )
+                } else {
+                    val publicDir = File(
+                        Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_PICTURES),
+                        "LibreTok"
+                    )
+                    if (!publicDir.exists()) publicDir.mkdirs()
+                    savedFile = File(publicDir, fileName)
+                    savedFile.outputStream().use { outStream ->
+                        body.byteStream().copyTo(outStream)
+                    }
+                    val values = ContentValues().apply {
+                        put(MediaStore.Images.Media.DATA, savedFile.absolutePath)
+                        put(MediaStore.Images.Media.MIME_TYPE, mimeType)
+                    }
+                    context.contentResolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values)
+                    savedUri = Uri.fromFile(savedFile)
+                }
+
+                val downloadItem = DownloadItem(
+                    id = "${downloadId}_$index",
+                    title = if (totalCount > 1) "${media.title} (${index + 1}/$totalCount)" else media.title,
+                    author = "${media.authorName} (@${media.authorUsername})",
+                    thumbnailUri = photoUrl,
+                    filePath = savedFile.absolutePath,
+                    fileUri = savedUri?.toString() ?: "",
+                    type = DownloadType.PHOTO,
+                    fileSizeBytes = if (bytesCopied > 0) bytesCopied else totalBytes,
+                    durationSeconds = 0,
+                    timestamp = System.currentTimeMillis(),
+                    sourceUrl = media.originalUrl
+                )
+
+                historyRepository.addItem(downloadItem)
+                downloadedItems.add(downloadItem)
+
+                val progress = (index + 1).toFloat() / totalCount
+                updateActiveDownload(
+                    ActiveDownload(
+                        id = downloadId,
+                        title = "${media.title} (${index + 1}/$totalCount Foto)",
+                        type = DownloadType.PHOTO,
+                        progress = progress,
+                        bytesDownloaded = (index + 1).toLong(),
+                        totalBytes = totalCount.toLong(),
+                        status = DownloadStatus.DOWNLOADING
+                    )
+                )
+            }
+
+            removeActiveDownload(downloadId)
+
+            if (downloadedItems.isEmpty()) {
+                Result.failure(Exception("Gagal mengunduh foto"))
+            } else {
+                Result.success(downloadedItems)
+            }
+        } catch (e: Exception) {
+            removeActiveDownload(downloadId)
             Result.failure(e)
         }
     }

@@ -321,10 +321,34 @@ class TikTokApiService(
             else -> platform.lowercase()
         }
 
+        // Handle Picker (Slideshow / Carousels / Multi-images) & Single Photos across platforms
+        val isPicker = videoResp.status == "picker"
+        val pickerItems = videoResp.picker ?: emptyList()
+        val pickerPhotos = if (isPicker) {
+            pickerItems.filter { it.type == "photo" || it.type == "image" || it.type == null || it.type != "video" }
+                .mapNotNull { it.url }
+        } else {
+            emptyList()
+        }
+
+        val isSinglePhoto = !isPicker && !videoResp.url.isNullOrBlank() && (
+            videoResp.url.contains(Regex("\\.(jpg|jpeg|png|webp)", RegexOption.IGNORE_CASE)) ||
+            videoResp.filename?.contains(Regex("\\.(jpg|jpeg|png|webp)", RegexOption.IGNORE_CASE)) == true ||
+            (platform == "Instagram" && cleanUrl.contains("/p/") && !videoResp.url.contains(".mp4"))
+        )
+
+        val imagesList = when {
+            pickerPhotos.isNotEmpty() -> pickerPhotos
+            isSinglePhoto -> listOf(videoResp.url!!)
+            else -> emptyList()
+        }
+        val isImages = imagesList.isNotEmpty()
+
         // Determine cover image
         val coverUrl = when {
             ytOEmbed?.thumbnailUrl != null -> ytOEmbed.thumbnailUrl
             youtubeId != null -> "https://img.youtube.com/vi/$youtubeId/hqdefault.jpg"
+            imagesList.isNotEmpty() -> imagesList.first()
             videoResp.status == "picker" -> {
                 videoResp.picker?.firstOrNull()?.thumb
                     ?: videoResp.picker?.firstOrNull()?.url
@@ -333,18 +357,9 @@ class TikTokApiService(
             else -> ""
         }
 
-        // Handle Picker (Slideshow / Carousels / Multi-images)
-        val isPicker = videoResp.status == "picker"
-        val pickerItems = videoResp.picker ?: emptyList()
-        val imagesList = if (isPicker) {
-            pickerItems.filter { it.type == "photo" }.mapNotNull { it.url }
-        } else {
-            emptyList()
-        }
-        val isImages = imagesList.isNotEmpty()
-
         val mainVideoUrl = when {
             isPicker -> pickerItems.firstOrNull { it.type == "video" }?.url ?: (videoResp.url ?: "")
+            isImages && videoResp.url?.contains(".mp4") == false -> ""
             else -> videoResp.url ?: ""
         }
 

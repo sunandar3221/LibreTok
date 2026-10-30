@@ -129,6 +129,19 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    fun downloadSelectedPhotos(photoUrls: List<String>) {
+        val media = _mediaPreview.value ?: return
+        if (photoUrls.isEmpty()) return
+        viewModelScope.launch {
+            val result = downloadManager.downloadPhotos(media, photoUrls)
+            result.onSuccess { items ->
+                if (items.isNotEmpty()) {
+                    _downloadFinishedItem.value = items.first()
+                }
+            }
+        }
+    }
+
     fun dismissDownloadFinishedEvent() {
         _downloadFinishedItem.value = null
     }
