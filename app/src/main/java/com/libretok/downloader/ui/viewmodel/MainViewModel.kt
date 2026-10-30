@@ -57,6 +57,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val _activePlayerTarget = MutableStateFlow<PlayerTarget?>(null)
     val activePlayerTarget: StateFlow<PlayerTarget?> = _activePlayerTarget.asStateFlow()
 
+    private val _downloadFinishedItem = MutableStateFlow<DownloadItem?>(null)
+    val downloadFinishedItem: StateFlow<DownloadItem?> = _downloadFinishedItem.asStateFlow()
+
     val downloadsHistory: StateFlow<List<DownloadItem>> = historyRepository.items
 
     val activeDownloads: StateFlow<Map<String, ActiveDownload>> = downloadManager.activeDownloads
@@ -119,8 +122,15 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun startDownload(type: DownloadType) {
         val media = _mediaPreview.value ?: return
         viewModelScope.launch {
-            downloadManager.downloadMedia(media, type)
+            val result = downloadManager.downloadMedia(media, type)
+            result.onSuccess { item ->
+                _downloadFinishedItem.value = item
+            }
         }
+    }
+
+    fun dismissDownloadFinishedEvent() {
+        _downloadFinishedItem.value = null
     }
 
     fun cancelDownload(downloadId: String) {

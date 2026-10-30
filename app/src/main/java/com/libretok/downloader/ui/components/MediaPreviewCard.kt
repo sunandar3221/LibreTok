@@ -324,12 +324,16 @@ fun MediaPreviewCard(
                 verticalArrangement = Arrangement.spacedBy(8.dp),
                 modifier = Modifier.fillMaxWidth()
             ) {
+                val isAnyDownloading = currentActiveDownload != null
                 val isDownloadingVideo = currentActiveDownload?.type == DownloadType.VIDEO
+                val isDownloadingHd = currentActiveDownload?.type == DownloadType.HD_VIDEO
+                val isDownloadingAudio = currentActiveDownload?.type == DownloadType.AUDIO
+                val isDownloadingPhotos = currentActiveDownload?.type == DownloadType.PHOTO
 
                 // Button 1: Download Video (Tanpa Watermark)
                 Button(
                     onClick = { onDownloadClick(DownloadType.VIDEO) },
-                    enabled = !isDownloadingVideo,
+                    enabled = !isAnyDownloading,
                     modifier = Modifier.fillMaxWidth(),
                     shape = RoundedCornerShape(12.dp),
                     colors = ButtonDefaults.buttonColors(containerColor = TikTokPink)
@@ -357,10 +361,9 @@ fun MediaPreviewCard(
 
                 // Button 2: Download HD Video (if available)
                 if (!media.hdVideoUrl.isNullOrBlank()) {
-                    val isDownloadingHd = currentActiveDownload?.type == DownloadType.HD_VIDEO
                     FilledTonalButton(
                         onClick = { onDownloadClick(DownloadType.HD_VIDEO) },
-                        enabled = !isDownloadingHd,
+                        enabled = !isAnyDownloading,
                         modifier = Modifier.fillMaxWidth(),
                         shape = RoundedCornerShape(12.dp),
                         colors = ButtonDefaults.filledTonalButtonColors(
@@ -391,10 +394,9 @@ fun MediaPreviewCard(
 
                 // Button 3: Download Audio / MP3
                 if (!media.musicUrl.isNullOrBlank()) {
-                    val isDownloadingAudio = currentActiveDownload?.type == DownloadType.AUDIO
                     OutlinedButton(
                         onClick = { onDownloadClick(DownloadType.AUDIO) },
-                        enabled = !isDownloadingAudio,
+                        enabled = !isAnyDownloading,
                         modifier = Modifier.fillMaxWidth(),
                         shape = RoundedCornerShape(12.dp)
                     ) {
@@ -421,10 +423,9 @@ fun MediaPreviewCard(
 
                 // Button 4: Download Images (if slideshow)
                 if (media.isImagesPost && media.images.isNotEmpty()) {
-                    val isDownloadingPhotos = currentActiveDownload?.type == DownloadType.PHOTO
                     OutlinedButton(
                         onClick = { onDownloadClick(DownloadType.PHOTO) },
-                        enabled = !isDownloadingPhotos,
+                        enabled = !isAnyDownloading,
                         modifier = Modifier.fillMaxWidth(),
                         shape = RoundedCornerShape(12.dp)
                     ) {
