@@ -295,7 +295,7 @@ class TikTokApiService(
                 val igMatcher = INSTAGRAM_USER_PATTERN.matcher(cleanUrl)
                 if (igMatcher.find()) {
                     val user = igMatcher.group(1)
-                    if (user !in listOf("p", "reel", "reels", "tv", "stories")) user else "Instagram Creator"
+                    if (!user.isNullOrBlank() && user !in listOf("p", "reel", "reels", "tv", "stories")) user else "Instagram Creator"
                 } else {
                     "Instagram Creator"
                 }
@@ -312,7 +312,7 @@ class TikTokApiService(
                 val igMatcher = INSTAGRAM_USER_PATTERN.matcher(cleanUrl)
                 if (igMatcher.find()) {
                     val user = igMatcher.group(1)
-                    if (user !in listOf("p", "reel", "reels", "tv", "stories")) user else "instagram"
+                    if (!user.isNullOrBlank() && user !in listOf("p", "reel", "reels", "tv", "stories")) user else "instagram"
                 } else {
                     "instagram"
                 }

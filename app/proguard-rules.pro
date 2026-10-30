@@ -1,5 +1,14 @@
 # LibreTok Proguard Rules
 
+# ViewModel & Android Lifecycle
+-keep class * extends androidx.lifecycle.ViewModel {
+    public <init>(...);
+}
+-keep class * extends androidx.lifecycle.AndroidViewModel {
+    public <init>(...);
+}
+-keep class com.libretok.downloader.ui.viewmodel.** { *; }
+
 # Gson & Models
 -keepattributes Signature
 -keepattributes *Annotation*
@@ -26,3 +35,11 @@
 # Compose
 -keepclassmembers class * extends androidx.compose.ui.Modifier { *; }
 -dontwarn androidx.compose.**
+
+# Kotlin Coroutines
+-keepnames class kotlinx.coroutines.internal.MainDispatcherFactory {}
+-keepnames class kotlinx.coroutines.CoroutineExceptionHandler {}
+-keepclassmembers class kotlinx.coroutines.** {
+    volatile <fields>;
+}
+
