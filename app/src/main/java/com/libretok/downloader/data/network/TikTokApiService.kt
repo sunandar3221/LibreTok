@@ -1,6 +1,7 @@
 package com.libretok.downloader.data.network
 
 import com.google.gson.Gson
+import com.google.gson.annotations.SerializedName
 import com.libretok.downloader.data.model.CobaltResponse
 import com.libretok.downloader.data.model.TikTokMedia
 import com.libretok.downloader.data.model.TikWmResponse
@@ -14,6 +15,13 @@ import okhttp3.RequestBody.Companion.toRequestBody
 import java.net.URLEncoder
 import java.util.concurrent.TimeUnit
 import java.util.regex.Pattern
+
+data class YouTubeOEmbed(
+    @SerializedName("title") val title: String?,
+    @SerializedName("author_name") val authorName: String?,
+    @SerializedName("author_url") val authorUrl: String?,
+    @SerializedName("thumbnail_url") val thumbnailUrl: String?
+)
 
 class TikTokApiService(
     private val client: OkHttpClient = OkHttpClient.Builder()
@@ -33,18 +41,19 @@ class TikTokApiService(
         )
         private val URL_PATTERN = Pattern.compile("https?://[a-zA-Z0-9./?=_%&+\\-#]+")
         private val YOUTUBE_ID_PATTERN = Pattern.compile("(?:v=|youtu\\.be/|shorts/)([a-zA-Z0-9_-]{11})")
+        private val INSTAGRAM_USER_PATTERN = Pattern.compile("instagram\\.com/([a-zA-Z0-9._]+)/(?:p|reel|tv|reels)")
         private val JSON_MEDIA_TYPE = "application/json; charset=utf-8".toMediaType()
     }
 
     /**
-     * Extracts social media video URLs from shared text or clipboard
+     * Extracts and sanitizes social media video URLs from shared text or clipboard
      */
     fun extractUrl(text: String): String? {
         val matcher = URL_PATTERN.matcher(text)
         var firstValidUrl: String? = null
 
         while (matcher.find()) {
-            val candidate = matcher.group()
+            val candidate = sanitizeUrl(matcher.group())
             val lower = candidate.lowercase()
             if (lower.contains("tiktok.com") || lower.contains("douyin.com") ||
                 lower.contains("instagram.com") || lower.contains("instagr.am") || lower.contains("threads.net") ||
@@ -58,7 +67,13 @@ class TikTokApiService(
                 firstValidUrl = candidate
             }
         }
-        return firstValidUrl
+        return firstValidUrl?.let { sanitizeUrl(it) }
+    }
+
+    private fun sanitizeUrl(raw: String): String {
+        var u = raw.trim()
+        u = u.trimEnd('.', ',', '!', '?', ';', ':', ')', ']', '}', '>', '"', '\'', ' ')
+        return u
     }
 
     /**
@@ -80,7 +95,7 @@ class TikTokApiService(
      * Fetches metadata & download links for TikTok, Instagram, YouTube, Facebook, etc.
      */
     suspend fun fetchMedia(url: String): Result<TikTokMedia> = withContext(Dispatchers.IO) {
-        val cleanUrl = extractUrl(url) ?: url.trim()
+        val cleanUrl = extractUrl(url) ?: sanitizeUrl(url)
         val platform = detectPlatform(cleanUrl)
 
         if (platform == "TikTok") {
@@ -93,17 +108,24 @@ class TikTokApiService(
             if (cobaltResult.isSuccess) {
                 return@withContext cobaltResult
             }
-            return@withContext tikWmResult
+            return@withContext Result.failure(
+                Exception("Video TikTok tidak dapat ditemukan. Pastikan tautan benar dan video bersifat publik.")
+            )
         } else {
             // Instagram, YouTube, Facebook, etc.
             val cobaltResult = fetchCobalt(cleanUrl, platform)
             if (cobaltResult.isSuccess) {
                 return@withContext cobaltResult
             }
-            return@withContext Result.failure(
-                cobaltResult.exceptionOrNull()
-                    ?: Exception("Gagal mengunduh video dari $platform. Pastikan link bersifat publik.")
-            )
+
+            val friendlyMsg = when (platform) {
+                "Instagram" -> "Konten Instagram tidak dapat diakses atau akun bersifat privat. Pastikan postingan/Reel bersifat publik dan coba salin link langsung dari menu Bagikan di Instagram."
+                "YouTube" -> "Video YouTube tidak ditemukan atau dibatasi. Pastikan video masih tersedia dan bersifat publik."
+                "Facebook" -> "Video Facebook tidak dapat diakses. Pastikan video berasal dari postingan publik (bukan grup privat)."
+                else -> "Gagal memproses tautan video dari $platform. Pastikan tautan masih aktif dan bersifat publik."
+            }
+
+            return@withContext Result.failure(Exception(friendlyMsg))
         }
     }
 
@@ -123,12 +145,11 @@ class TikTokApiService(
                 return@withContext Result.failure(Exception("HTTP error ${response.code}"))
             }
 
-            val body = response.body?.string() ?: return@withContext Result.failure(Exception("Empty response body"))
+            val body = response.body?.string() ?: return@withContext Result.failure(Exception("Respon server kosong"))
             val tikWmResponse = gson.fromJson(body, TikWmResponse::class.java)
 
             if (tikWmResponse.code != 0 || tikWmResponse.data == null) {
-                val errorMsg = tikWmResponse.msg ?: "Gagal mendapatkan video TikTok dari link ini."
-                return@withContext Result.failure(Exception(errorMsg))
+                return@withContext Result.failure(Exception(tikWmResponse.msg ?: "Video TikTok tidak ditemukan"))
             }
 
             val data = tikWmResponse.data
@@ -150,7 +171,7 @@ class TikTokApiService(
             val media = TikTokMedia(
                 id = data.id ?: System.currentTimeMillis().toString(),
                 title = data.title?.ifBlank { "TikTok Video" } ?: "TikTok Video",
-                authorName = data.author?.nickname ?: "TikTok User",
+                authorName = data.author?.nickname?.ifBlank { "TikTok Creator" } ?: "TikTok Creator",
                 authorUsername = data.author?.uniqueId ?: "",
                 authorAvatar = avatarUrl,
                 coverUrl = coverUrl,
@@ -175,9 +196,13 @@ class TikTokApiService(
     private suspend fun fetchCobalt(cleanUrl: String, platform: String): Result<TikTokMedia> = withContext(Dispatchers.IO) {
         var lastError: Exception? = null
 
+        // If YouTube, fetch official oEmbed in parallel to get exact channel name, handle, and thumbnail
+        val youtubeOEmbedDeferred = if (platform == "YouTube") {
+            async { fetchYouTubeOEmbed(cleanUrl) }
+        } else null
+
         for (endpoint in COBALT_INSTANCES) {
             try {
-                // Query video and audio concurrently
                 val videoDeferred = async { requestCobalt(endpoint, cleanUrl, isAudio = false) }
                 val audioDeferred = async { requestCobalt(endpoint, cleanUrl, isAudio = true) }
 
@@ -185,7 +210,8 @@ class TikTokApiService(
                 val audioResp = audioDeferred.await()
 
                 if (videoResp != null && (videoResp.status == "tunnel" || videoResp.status == "redirect" || videoResp.status == "picker")) {
-                    val media = mapCobaltToMedia(cleanUrl, platform, videoResp, audioResp)
+                    val ytOEmbed = youtubeOEmbedDeferred?.await()
+                    val media = mapCobaltToMedia(cleanUrl, platform, videoResp, audioResp, ytOEmbed)
                     return@withContext Result.success(media)
                 }
 
@@ -197,7 +223,25 @@ class TikTokApiService(
             }
         }
 
-        Result.failure(lastError ?: Exception("Gagal memproses link $platform. Pastikan link valid dan publik."))
+        Result.failure(lastError ?: Exception("Gagal memproses tautan"))
+    }
+
+    private fun fetchYouTubeOEmbed(url: String): YouTubeOEmbed? {
+        return try {
+            val encoded = URLEncoder.encode(url, "UTF-8")
+            val oEmbedUrl = "https://www.youtube.com/oembed?url=$encoded&format=json"
+            val request = Request.Builder()
+                .url(oEmbedUrl)
+                .header("User-Agent", "Mozilla/5.0")
+                .build()
+
+            val response = client.newCall(request).execute()
+            if (!response.isSuccessful) return null
+            val body = response.body?.string() ?: return null
+            gson.fromJson(body, YouTubeOEmbed::class.java)
+        } catch (_: Exception) {
+            null
+        }
     }
 
     private fun requestCobalt(endpoint: String, targetUrl: String, isAudio: Boolean): CobaltResponse? {
@@ -228,14 +272,15 @@ class TikTokApiService(
         cleanUrl: String,
         platform: String,
         videoResp: CobaltResponse,
-        audioResp: CobaltResponse?
+        audioResp: CobaltResponse?,
+        ytOEmbed: YouTubeOEmbed?
     ): TikTokMedia {
         val ytMatcher = YOUTUBE_ID_PATTERN.matcher(cleanUrl)
         val youtubeId = if (ytMatcher.find()) ytMatcher.group(1) else null
 
-        // Generate clean title from filename
+        // Generate clean title
         val rawFilename = videoResp.filename ?: audioResp?.filename ?: "$platform Media"
-        val cleanTitle = rawFilename
+        val cleanTitle = ytOEmbed?.title?.ifBlank { null } ?: rawFilename
             .replace(".mp4", "")
             .replace(".mp3", "")
             .replace(".webm", "")
@@ -243,8 +288,42 @@ class TikTokApiService(
             .trim()
             .ifBlank { "$platform Video" }
 
+        // Determine Channel / Author Name
+        var authorName = when (platform) {
+            "YouTube" -> ytOEmbed?.authorName?.ifBlank { null } ?: "YouTube Creator"
+            "Instagram" -> {
+                val igMatcher = INSTAGRAM_USER_PATTERN.matcher(cleanUrl)
+                if (igMatcher.find()) {
+                    val user = igMatcher.group(1)
+                    if (user !in listOf("p", "reel", "reels", "tv", "stories")) user else "Instagram Creator"
+                } else {
+                    "Instagram Creator"
+                }
+            }
+            "Facebook" -> "Facebook Creator"
+            else -> "$platform Creator"
+        }
+
+        var authorUsername = when (platform) {
+            "YouTube" -> {
+                ytOEmbed?.authorUrl?.substringAfterLast("/")?.replace("@", "") ?: "youtube"
+            }
+            "Instagram" -> {
+                val igMatcher = INSTAGRAM_USER_PATTERN.matcher(cleanUrl)
+                if (igMatcher.find()) {
+                    val user = igMatcher.group(1)
+                    if (user !in listOf("p", "reel", "reels", "tv", "stories")) user else "instagram"
+                } else {
+                    "instagram"
+                }
+            }
+            "Facebook" -> "facebook"
+            else -> platform.lowercase()
+        }
+
         // Determine cover image
         val coverUrl = when {
+            ytOEmbed?.thumbnailUrl != null -> ytOEmbed.thumbnailUrl
             youtubeId != null -> "https://img.youtube.com/vi/$youtubeId/hqdefault.jpg"
             videoResp.status == "picker" -> {
                 videoResp.picker?.firstOrNull()?.thumb
@@ -274,8 +353,8 @@ class TikTokApiService(
         return TikTokMedia(
             id = youtubeId ?: System.currentTimeMillis().toString(),
             title = cleanTitle,
-            authorName = platform,
-            authorUsername = platform.lowercase(),
+            authorName = authorName,
+            authorUsername = authorUsername,
             authorAvatar = "",
             coverUrl = coverUrl,
             videoUrl = mainVideoUrl,

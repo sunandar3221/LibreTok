@@ -6,6 +6,7 @@ import androidx.compose.animation.*
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -49,9 +50,10 @@ fun HomeScreen(
     LazyColumn(
         modifier = modifier
             .fillMaxSize()
+            .statusBarsPadding()
             .padding(horizontal = 16.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp),
-        contentPadding = PaddingValues(top = 12.dp, bottom = 24.dp)
+        contentPadding = PaddingValues(top = 16.dp, bottom = 48.dp)
     ) {
         item(key = "header") {
             // App Brand Header
@@ -61,7 +63,7 @@ fun HomeScreen(
             ) {
                 Box(
                     modifier = Modifier
-                        .size(40.dp)
+                        .size(42.dp)
                         .clip(CircleShape)
                         .background(logoBrush),
                     contentAlignment = Alignment.Center
@@ -70,14 +72,17 @@ fun HomeScreen(
                         imageVector = Icons.Default.FileDownload,
                         contentDescription = null,
                         tint = Color.White,
-                        modifier = Modifier.size(24.dp)
+                        modifier = Modifier.size(26.dp)
                     )
                 }
 
                 Spacer(modifier = Modifier.width(12.dp))
 
                 Column {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
                         Text(
                             text = "LibreTok",
                             style = MaterialTheme.typography.headlineMedium,
@@ -139,7 +144,7 @@ fun HomeScreen(
                                 style = MaterialTheme.typography.titleMedium
                             )
                             Text(
-                                text = "Ingin langsung mengunduh video ini?",
+                                text = "Ingin langsung memeriksa tautan ini?",
                                 style = MaterialTheme.typography.bodyMedium,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
@@ -207,22 +212,22 @@ fun HomeScreen(
 
                     Spacer(modifier = Modifier.height(10.dp))
 
-                    // Supported Platform Chips
-                    Row(
+                    // Supported Platform Chips - Scrollable to never collide on small screens
+                    LazyRow(
                         modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
-                        listOf("TikTok", "Instagram", "YouTube", "Facebook").forEach { plat ->
+                        items(listOf("TikTok", "Instagram", "YouTube", "Facebook")) { plat ->
                             Surface(
                                 shape = RoundedCornerShape(8.dp),
-                                color = MaterialTheme.colorScheme.surface.copy(alpha = 0.8f)
+                                color = MaterialTheme.colorScheme.surface.copy(alpha = 0.85f)
                             ) {
                                 Text(
                                     text = plat,
                                     fontSize = 11.sp,
                                     fontWeight = FontWeight.SemiBold,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
+                                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
                                 )
                             }
                         }
@@ -262,55 +267,43 @@ fun HomeScreen(
             item(key = "error_banner") {
                 Card(
                     modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(14.dp),
                     colors = CardDefaults.cardColors(
                         containerColor = MaterialTheme.colorScheme.errorContainer
-                    ),
-                    shape = RoundedCornerShape(12.dp)
+                    )
                 ) {
                     Row(
-                        modifier = Modifier.padding(14.dp),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(14.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Icon(
-                            Icons.Default.ErrorOutline,
+                            imageVector = Icons.Default.ErrorOutline,
                             contentDescription = null,
-                            tint = MaterialTheme.colorScheme.error
+                            tint = MaterialTheme.colorScheme.error,
+                            modifier = Modifier.size(24.dp)
                         )
                         Spacer(modifier = Modifier.width(12.dp))
                         Text(
                             text = errorMessage ?: "",
+                            style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.onErrorContainer,
-                            style = MaterialTheme.typography.bodyMedium
+                            modifier = Modifier.weight(1f)
                         )
                     }
                 }
             }
         }
 
-        // Active Downloads Progress Section
-        if (activeDownloads.isNotEmpty()) {
-            item(key = "active_downloads_header") {
-                Text(
-                    text = "Sedang Mengunduh (${activeDownloads.size})",
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.Bold
-                )
-            }
-
-            items(activeDownloads.values.toList(), key = { it.id }) { download ->
-                ActiveDownloadItemCard(
-                    download = download,
-                    onCancel = { viewModel.cancelDownload(download.id) }
-                )
-            }
-        }
-
-        // Media Preview Card
+        // Media Preview Card (Progress bar is located directly inside here, above download buttons!)
         if (mediaPreview != null) {
             item(key = "media_preview_${mediaPreview!!.id}") {
                 MediaPreviewCard(
                     media = mediaPreview!!,
+                    activeDownloads = activeDownloads,
                     onDownloadClick = { type -> viewModel.startDownload(type) },
+                    onCancelDownload = { downloadId -> viewModel.cancelDownload(downloadId) },
                     onPreviewClick = {
                         viewModel.openPlayer(PlayerTarget.StreamPreview(mediaPreview!!))
                     }
@@ -341,8 +334,8 @@ fun HomeScreen(
 
                     HowToStepItem(
                         number = "1",
-                        title = "Buka TikTok & Salin Link",
-                        desc = "Tekan tombol 'Bagikan' (Share) pada video TikTok lalu pilih 'Salin Tautan' (Copy Link)."
+                        title = "Buka TikTok, IG, YT, atau Facebook",
+                        desc = "Tekan tombol 'Bagikan' (Share) pada video lalu pilih 'Salin Tautan' (Copy Link)."
                     )
                     Spacer(modifier = Modifier.height(10.dp))
                     HowToStepItem(
@@ -363,93 +356,36 @@ fun HomeScreen(
 }
 
 @Composable
-fun ActiveDownloadItemCard(
-    download: ActiveDownload,
-    onCancel: () -> Unit
-) {
-    Card(
-        modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(14.dp),
-        colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.surfaceVariant
-        )
-    ) {
-        Column(modifier = Modifier.padding(12.dp)) {
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Column(modifier = Modifier.weight(1f)) {
-                    Text(
-                        text = download.title,
-                        fontWeight = FontWeight.SemiBold,
-                        maxLines = 1
-                    )
-                    val statusText = if (download.status == DownloadStatus.FAILED) {
-                        download.errorMessage ?: "Gagal"
-                    } else {
-                        "${(download.progress * 100).toInt()}% • Mengunduh..."
-                    }
-                    Text(
-                        text = statusText,
-                        style = MaterialTheme.typography.bodySmall,
-                        color = if (download.status == DownloadStatus.FAILED) MaterialTheme.colorScheme.error
-                        else MaterialTheme.colorScheme.primary
-                    )
-                }
-
-                IconButton(onClick = onCancel) {
-                    Icon(Icons.Default.Close, contentDescription = "Batalkan")
-                }
-            }
-
-            Spacer(modifier = Modifier.height(8.dp))
-
-            if (download.status != DownloadStatus.FAILED) {
-                LinearProgressIndicator(
-                    progress = { download.progress },
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(6.dp)
-                        .clip(RoundedCornerShape(3.dp)),
-                    color = TikTokPink
-                )
-            }
-        }
-    }
-}
-
-@Composable
 fun HowToStepItem(
     number: String,
     title: String,
     desc: String
 ) {
     Row(verticalAlignment = Alignment.Top) {
-        Surface(
-            shape = CircleShape,
-            color = TikTokPink.copy(alpha = 0.15f),
-            modifier = Modifier.size(28.dp)
+        Box(
+            modifier = Modifier
+                .size(26.dp)
+                .clip(CircleShape)
+                .background(TikTokPink.copy(alpha = 0.2f)),
+            contentAlignment = Alignment.Center
         ) {
-            Box(contentAlignment = Alignment.Center) {
-                Text(
-                    text = number,
-                    fontWeight = FontWeight.Bold,
-                    color = TikTokPink,
-                    fontSize = 13.sp
-                )
-            }
+            Text(
+                text = number,
+                fontWeight = FontWeight.Bold,
+                color = TikTokPink,
+                fontSize = 13.sp
+            )
         }
         Spacer(modifier = Modifier.width(12.dp))
         Column {
             Text(
                 text = title,
-                style = MaterialTheme.typography.titleMedium,
-                fontWeight = FontWeight.SemiBold
+                style = MaterialTheme.typography.titleSmall,
+                fontWeight = FontWeight.Bold
             )
             Text(
                 text = desc,
-                style = MaterialTheme.typography.bodyMedium,
+                style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
         }
