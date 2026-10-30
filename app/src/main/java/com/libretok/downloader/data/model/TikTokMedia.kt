@@ -17,7 +17,28 @@ data class TikTokMedia(
     val sizeBytes: Long,
     val isImagesPost: Boolean = false,
     val images: List<String> = emptyList(),
-    val originalUrl: String
+    val originalUrl: String,
+    val platform: String = "TikTok"
+)
+
+// DTO for Cobalt API
+data class CobaltResponse(
+    @SerializedName("status") val status: String?,
+    @SerializedName("url") val url: String?,
+    @SerializedName("filename") val filename: String?,
+    @SerializedName("picker") val picker: List<CobaltPickerItem>?,
+    @SerializedName("text") val text: String?,
+    @SerializedName("error") val error: CobaltError?
+)
+
+data class CobaltPickerItem(
+    @SerializedName("type") val type: String?,
+    @SerializedName("url") val url: String?,
+    @SerializedName("thumb") val thumb: String?
+)
+
+data class CobaltError(
+    @SerializedName("code") val code: String?
 )
 
 // DTO for TikWM API response

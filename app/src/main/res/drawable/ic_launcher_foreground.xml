@@ -1,0 +1,58 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:aapt="http://schemas.android.com/aapt"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+
+    <!-- Stylized Play Outline -->
+    <path
+        android:pathData="M38,32 L74,53 C76,54.2 76,55.8 74,57 L38,78 C36,79.2 34,78.2 34,75.5 L34,34.5 C34,31.8 36,30.8 38,32 Z"
+        android:strokeWidth="5"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round">
+        <aapt:attr name="android:strokeColor">
+            <gradient
+                android:startX="34"
+                android:startY="32"
+                android:endX="76"
+                android:endY="78"
+                android:type="linear">
+                <item android:color="#25F4EE" android:offset="0.0" />
+                <item android:color="#FE2C55" android:offset="1.0" />
+            </gradient>
+        </aapt:attr>
+    </path>
+
+    <!-- Downward Arrow Stem -->
+    <path
+        android:pathData="M54,38 L54,64"
+        android:strokeColor="#FFFFFF"
+        android:strokeWidth="5.5"
+        android:strokeLineCap="round" />
+
+    <!-- Downward Arrow Head -->
+    <path
+        android:pathData="M44,56 L54,66 L64,56"
+        android:strokeColor="#FFFFFF"
+        android:strokeWidth="5.5"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round" />
+
+    <!-- Modern Tray Line -->
+    <path
+        android:pathData="M41,75 L67,75"
+        android:strokeColor="#25F4EE"
+        android:strokeWidth="4.5"
+        android:strokeLineCap="round" />
+
+    <!-- Modern Accent Dots -->
+    <path
+        android:pathData="M72,36m-2,0a2,2 0 1,0 4,0a2,2 0 1,0 -4,0"
+        android:fillColor="#25F4EE" />
+
+    <path
+        android:pathData="M34,68m-1.5,0a1.5,1.5 0 1,0 3,0a1.5,1.5 0 1,0 -3,0"
+        android:fillColor="#FE2C55" />
+</vector>

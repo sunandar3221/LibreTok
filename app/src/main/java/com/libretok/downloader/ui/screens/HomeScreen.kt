@@ -98,7 +98,7 @@ fun HomeScreen(
                         }
                     }
                     Text(
-                        text = "TikTok Downloader Tanpa Watermark & MP3",
+                        text = "TikTok, IG, YouTube & Facebook Downloader",
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -134,7 +134,7 @@ fun HomeScreen(
                         Spacer(modifier = Modifier.width(10.dp))
                         Column(modifier = Modifier.weight(1f)) {
                             Text(
-                                text = "Link TikTok Terdeteksi!",
+                                text = "Link Media Terdeteksi!",
                                 fontWeight = FontWeight.Bold,
                                 style = MaterialTheme.typography.titleMedium
                             )
@@ -177,7 +177,7 @@ fun HomeScreen(
                         value = urlInput,
                         onValueChange = { viewModel.onUrlChange(it) },
                         modifier = Modifier.fillMaxWidth(),
-                        placeholder = { Text("Tempel link video TikTok di sini...") },
+                        placeholder = { Text("Tempel link TikTok, IG, YouTube, atau FB...") },
                         leadingIcon = {
                             Icon(Icons.Default.Link, contentDescription = null)
                         },
@@ -204,6 +204,29 @@ fun HomeScreen(
                         shape = RoundedCornerShape(14.dp),
                         singleLine = true
                     )
+
+                    Spacer(modifier = Modifier.height(10.dp))
+
+                    // Supported Platform Chips
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        listOf("TikTok", "Instagram", "YouTube", "Facebook").forEach { plat ->
+                            Surface(
+                                shape = RoundedCornerShape(8.dp),
+                                color = MaterialTheme.colorScheme.surface.copy(alpha = 0.8f)
+                            ) {
+                                Text(
+                                    text = plat,
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
+                                )
+                            }
+                        }
+                    }
 
                     Spacer(modifier = Modifier.height(12.dp))
 

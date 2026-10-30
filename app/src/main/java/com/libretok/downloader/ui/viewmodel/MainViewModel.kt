@@ -97,7 +97,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val cleanUrl = apiService.extractUrl(targetUrl) ?: targetUrl.trim()
 
         if (cleanUrl.isBlank()) {
-            _errorMessage.value = "Masukkan link video TikTok terlebih dahulu."
+            _errorMessage.value = "Masukkan link video (TikTok, Instagram, YouTube, Facebook) terlebih dahulu."
             return
         }
 

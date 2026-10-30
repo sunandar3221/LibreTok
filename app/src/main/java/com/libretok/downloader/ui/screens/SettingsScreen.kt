@@ -3,6 +3,7 @@ package com.libretok.downloader.ui.screens
 import android.content.Intent
 import android.net.Uri
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.shape.CircleShape
@@ -28,6 +29,12 @@ import com.libretok.downloader.ui.theme.TikTokPink
 fun SettingsScreen(
     modifier: Modifier = Modifier
 ) {
+    val context = LocalContext.current
+
+    fun openUrl(url: String) {
+        val intent = Intent(Intent.ACTION_VIEW, Uri.parse(url))
+        context.startActivity(intent)
+    }
 
     Scaffold(
         topBar = {
@@ -78,18 +85,108 @@ fun SettingsScreen(
                             Spacer(modifier = Modifier.width(12.dp))
                             Column {
                                 Text(
-                                    text = "100% Gratis & Tanpa Iklan",
+                                    text = "100% Gratis & Open Source",
                                     style = MaterialTheme.typography.titleMedium,
                                     fontWeight = FontWeight.Bold,
                                     color = TikTokPink
                                 )
                                 Text(
-                                    text = "Semua fitur AhaTok Downloader tanpa batasan",
+                                    text = "Download video & audio tanpa iklan, tanpa batas",
                                     style = MaterialTheme.typography.bodyMedium,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
                             }
                         }
+                    }
+                }
+            }
+
+            // Developer & License Info
+            item {
+                Text(
+                    text = "Developer & Lisensi",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold
+                )
+            }
+
+            item {
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(16.dp),
+                    colors = CardDefaults.cardColors(
+                        containerColor = MaterialTheme.colorScheme.surfaceVariant
+                    )
+                ) {
+                    Column(modifier = Modifier.padding(16.dp)) {
+                        SettingsClickableRow(
+                            icon = Icons.Default.Person,
+                            title = "Nama Developer",
+                            value = "sunandar3221",
+                            actionHint = "Kunjungi Profil",
+                            onClick = { openUrl("https://github.com/sunandar3221") }
+                        )
+                        HorizontalDivider(modifier = Modifier.padding(vertical = 12.dp))
+                        SettingsClickableRow(
+                            icon = Icons.Default.Code,
+                            title = "Repositori GitHub",
+                            value = "github.com/sunandar3221/LibreTok",
+                            actionHint = "Buka Repo",
+                            onClick = { openUrl("https://github.com/sunandar3221/LibreTok") }
+                        )
+                        HorizontalDivider(modifier = Modifier.padding(vertical = 12.dp))
+                        SettingsClickableRow(
+                            icon = Icons.Default.Gavel,
+                            title = "Lisensi Software",
+                            value = "GNU General Public License v3.0 (GPLv3)",
+                            actionHint = "Lihat Lisensi",
+                            onClick = { openUrl("https://www.gnu.org/licenses/gpl-3.0.html") }
+                        )
+                    }
+                }
+            }
+
+            // Supported Platforms Card
+            item {
+                Text(
+                    text = "Platform yang Didukung",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold
+                )
+            }
+
+            item {
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(16.dp),
+                    colors = CardDefaults.cardColors(
+                        containerColor = MaterialTheme.colorScheme.surfaceVariant
+                    )
+                ) {
+                    Column(modifier = Modifier.padding(16.dp)) {
+                        FeatureHighlightRow(
+                            icon = Icons.Default.PlayCircle,
+                            title = "TikTok",
+                            desc = "Video No Watermark (SD & HD), Audio MP3, dan Foto Slideshow"
+                        )
+                        HorizontalDivider(modifier = Modifier.padding(vertical = 10.dp))
+                        FeatureHighlightRow(
+                            icon = Icons.Default.CameraAlt,
+                            title = "Instagram",
+                            desc = "Reels, Video Post, Audio MP3, dan Carousel"
+                        )
+                        HorizontalDivider(modifier = Modifier.padding(vertical = 10.dp))
+                        FeatureHighlightRow(
+                            icon = Icons.Default.Subscriptions,
+                            title = "YouTube",
+                            desc = "Video Standar & HD, YouTube Shorts, serta Ekstrak MP3"
+                        )
+                        HorizontalDivider(modifier = Modifier.padding(vertical = 10.dp))
+                        FeatureHighlightRow(
+                            icon = Icons.Default.ThumbUp,
+                            title = "Facebook",
+                            desc = "Facebook Watch, Reels, Video Publik, dan Audio MP3"
+                        )
                     }
                 }
             }
@@ -123,50 +220,11 @@ fun SettingsScreen(
                             title = "Folder Audio MP3",
                             value = "Penyimpanan Utama > Music > LibreTok"
                         )
-                    }
-                }
-            }
-
-            // Key Features Section
-            item {
-                Text(
-                    text = "Fitur Unggulan",
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.Bold
-                )
-            }
-
-            item {
-                Card(
-                    modifier = Modifier.fillMaxWidth(),
-                    shape = RoundedCornerShape(16.dp),
-                    colors = CardDefaults.cardColors(
-                        containerColor = MaterialTheme.colorScheme.surfaceVariant
-                    )
-                ) {
-                    Column(modifier = Modifier.padding(16.dp)) {
-                        FeatureHighlightRow(
-                            icon = Icons.Default.HighQuality,
-                            title = "Tanpa Watermark & Kualitas HD",
-                            desc = "Video bersih tanpa logo TikTok dan tanpa kompresi berlebih."
-                        )
-                        HorizontalDivider(modifier = Modifier.padding(vertical = 10.dp))
-                        FeatureHighlightRow(
-                            icon = Icons.Default.Audiotrack,
-                            title = "Ekstrak Musik & Suara ke MP3",
-                            desc = "Ambil file musik TikTok langsung dalam format audio MP3."
-                        )
-                        HorizontalDivider(modifier = Modifier.padding(vertical = 10.dp))
-                        FeatureHighlightRow(
-                            icon = Icons.Default.Share,
-                            title = "Dukungan Share Sheet TikTok",
-                            desc = "Klik Bagikan langsung dari TikTok lalu pilih LibreTok."
-                        )
-                        HorizontalDivider(modifier = Modifier.padding(vertical = 10.dp))
-                        FeatureHighlightRow(
-                            icon = Icons.Default.Security,
-                            title = "Privasi Terjamin",
-                            desc = "Tidak memerlukan login akun, bebas pelacak dan iklan."
+                        HorizontalDivider(modifier = Modifier.padding(vertical = 12.dp))
+                        SettingsInfoRow(
+                            icon = Icons.Default.PhotoLibrary,
+                            title = "Folder Foto",
+                            value = "Penyimpanan Utama > Pictures > LibreTok"
                         )
                     }
                 }
@@ -193,13 +251,13 @@ fun SettingsScreen(
                         SettingsInfoRow(
                             icon = Icons.Default.Info,
                             title = "Versi Aplikasi",
-                            value = "LibreTok v1.0.0 (Native Jetpack Compose)"
+                            value = "LibreTok v1.0.1 (Signed Release)"
                         )
                         HorizontalDivider(modifier = Modifier.padding(vertical = 12.dp))
                         SettingsInfoRow(
                             icon = Icons.Default.Android,
-                            title = "Desain UI",
-                            value = "Jetpack Compose Material 3 Asli Google"
+                            title = "Desain UI Framework",
+                            value = "Google Jetpack Compose (Material 3 Native)"
                         )
                     }
                 }
@@ -209,6 +267,48 @@ fun SettingsScreen(
                 Spacer(modifier = Modifier.height(24.dp))
             }
         }
+    }
+}
+
+@Composable
+fun SettingsClickableRow(
+    icon: ImageVector,
+    title: String,
+    value: String,
+    actionHint: String,
+    onClick: () -> Unit
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Icon(
+            imageVector = icon,
+            contentDescription = null,
+            tint = MaterialTheme.colorScheme.primary,
+            modifier = Modifier.size(24.dp)
+        )
+        Spacer(modifier = Modifier.width(14.dp))
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = title,
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.SemiBold
+            )
+            Text(
+                text = value,
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+        Icon(
+            imageVector = Icons.Default.OpenInNew,
+            contentDescription = actionHint,
+            tint = MaterialTheme.colorScheme.primary.copy(alpha = 0.7f),
+            modifier = Modifier.size(20.dp)
+        )
     }
 }
 
