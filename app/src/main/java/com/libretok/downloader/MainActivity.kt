@@ -26,7 +26,20 @@ import com.libretok.downloader.ui.viewmodel.MainViewModel
 class MainActivity : ComponentActivity() {
 
     private val viewModel: MainViewModel by viewModels {
-        ViewModelProvider.AndroidViewModelFactory.getInstance(application)
+        object : ViewModelProvider.Factory {
+            @Suppress("UNCHECKED_CAST")
+            override fun <T : androidx.lifecycle.ViewModel> create(modelClass: Class<T>): T {
+                return MainViewModel(application) as T
+            }
+
+            @Suppress("UNCHECKED_CAST")
+            override fun <T : androidx.lifecycle.ViewModel> create(
+                modelClass: Class<T>,
+                extras: androidx.lifecycle.viewmodel.CreationExtras
+            ): T {
+                return MainViewModel(application) as T
+            }
+        }
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {

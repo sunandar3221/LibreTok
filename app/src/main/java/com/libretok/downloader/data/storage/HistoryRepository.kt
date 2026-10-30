@@ -3,7 +3,6 @@ package com.libretok.downloader.data.storage
 import android.content.Context
 import android.content.SharedPreferences
 import com.google.gson.Gson
-import com.google.gson.reflect.TypeToken
 import com.libretok.downloader.data.model.DownloadItem
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -23,22 +22,25 @@ class HistoryRepository(context: Context) {
     }
 
     private fun loadHistory() {
-        val json = prefs.getString("items_json", null)
-        if (!json.isNullOrBlank()) {
-            val type = object : TypeToken<List<DownloadItem>>() {}.type
-            try {
-                val list: List<DownloadItem> = gson.fromJson(json, type) ?: emptyList()
-                _items.value = list.sortedByDescending { it.timestamp }
-            } catch (e: Exception) {
-                _items.value = emptyList()
+        try {
+            val json = prefs.getString("items_json", null)
+            if (!json.isNullOrBlank()) {
+                val array = gson.fromJson(json, Array<DownloadItem>::class.java)
+                _items.value = array?.toList()?.sortedByDescending { it.timestamp } ?: emptyList()
             }
+        } catch (e: Throwable) {
+            _items.value = emptyList()
         }
     }
 
     private fun saveHistory(list: List<DownloadItem>) {
-        val json = gson.toJson(list)
-        prefs.edit().putString("items_json", json).apply()
-        _items.value = list.sortedByDescending { it.timestamp }
+        try {
+            val json = gson.toJson(list.toTypedArray())
+            prefs.edit().putString("items_json", json).apply()
+            _items.value = list.sortedByDescending { it.timestamp }
+        } catch (e: Throwable) {
+            _items.value = list.sortedByDescending { it.timestamp }
+        }
     }
 
     fun addItem(item: DownloadItem) {

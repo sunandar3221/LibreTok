@@ -1,5 +1,11 @@
 # LibreTok Proguard Rules
 
+# Preserve generic signatures, annotations, and inner class relationships
+-keepattributes Signature
+-keepattributes *Annotation*
+-keepattributes EnclosingMethod
+-keepattributes InnerClasses
+
 # ViewModel & Android Lifecycle
 -keep class * extends androidx.lifecycle.ViewModel {
     public <init>(...);
@@ -10,9 +16,11 @@
 -keep class com.libretok.downloader.ui.viewmodel.** { *; }
 
 # Gson & Models
--keepattributes Signature
--keepattributes *Annotation*
+-keep class com.google.gson.** { *; }
+-keep class * extends com.google.gson.reflect.TypeToken
+-keepclassmembers class * extends com.google.gson.reflect.TypeToken { *; }
 -keep class com.libretok.downloader.data.model.** { *; }
+-keepclassmembers class com.libretok.downloader.data.model.** { *; }
 -keepclassmembers class * {
     @com.google.gson.annotations.SerializedName <fields>;
 }
@@ -21,6 +29,7 @@
 -dontwarn okhttp3.**
 -dontwarn okio.**
 -keep class okhttp3.** { *; }
+-keep interface okhttp3.** { *; }
 
 # Media3 ExoPlayer
 -keep class androidx.media3.exoplayer.** { *; }

@@ -58,7 +58,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     val activePlayerTarget: StateFlow<PlayerTarget?> = _activePlayerTarget.asStateFlow()
 
     val downloadsHistory: StateFlow<List<DownloadItem>> = historyRepository.items
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
     val activeDownloads: StateFlow<Map<String, ActiveDownload>> = downloadManager.activeDownloads
 
