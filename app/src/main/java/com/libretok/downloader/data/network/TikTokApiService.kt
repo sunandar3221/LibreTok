@@ -2,6 +2,7 @@ package com.libretok.downloader.data.network
 
 import com.google.gson.Gson
 import com.google.gson.annotations.SerializedName
+import com.libretok.downloader.BuildConfig
 import com.libretok.downloader.data.model.CobaltResponse
 import com.libretok.downloader.data.model.TikTokMedia
 import com.libretok.downloader.data.model.TikWmResponse
@@ -335,6 +336,68 @@ class TikTokApiService(
         return if (matcher.find()) matcher.group(1) else null
     }
 
+    private suspend fun requestInnertubePlayer(videoId: String, isIos: Boolean): InnertubePlayerResponse? = withContext(Dispatchers.IO) {
+        try {
+            val payload = if (isIos) {
+                mapOf(
+                    "videoId" to videoId,
+                    "racyCheckOk" to true,
+                    "contentCheckOk" to true,
+                    "context" to mapOf(
+                        "client" to mapOf(
+                            "clientName" to "IOS",
+                            "clientVersion" to "20.10.4",
+                            "deviceMake" to "Apple",
+                            "deviceModel" to "iPhone16,2",
+                            "osName" to "iPhone",
+                            "osVersion" to "18.3.2.22D82",
+                            "hl" to "en",
+                            "gl" to "US"
+                        )
+                    )
+                )
+            } else {
+                mapOf(
+                    "videoId" to videoId,
+                    "racyCheckOk" to true,
+                    "contentCheckOk" to true,
+                    "context" to mapOf(
+                        "client" to mapOf(
+                            "clientName" to "ANDROID",
+                            "clientVersion" to "21.26.364",
+                            "androidSdkVersion" to 30,
+                            "osName" to "Android",
+                            "osVersion" to "11",
+                            "hl" to "en",
+                            "gl" to "US"
+                        )
+                    )
+                )
+            }
+
+            val ua = if (isIos) {
+                "com.google.ios.youtube/20.10.4 (iPhone16,2; U; CPU iOS 18_3_2 like Mac OS X; en_US)"
+            } else {
+                "com.google.android.youtube/21.26.364 (Linux; U; Android 11) gzip"
+            }
+
+            val request = Request.Builder()
+                .url("https://www.youtube.com/youtubei/v1/player")
+                .header("Content-Type", "application/json")
+                .header("User-Agent", ua)
+                .header("Accept", "application/json")
+                .post(gson.toJson(payload).toRequestBody(JSON_MEDIA_TYPE))
+                .build()
+
+            val response = client.newCall(request).execute()
+            if (!response.isSuccessful) return@withContext null
+            val body = response.body?.string() ?: return@withContext null
+            gson.fromJson(body, InnertubePlayerResponse::class.java)
+        } catch (_: Exception) {
+            null
+        }
+    }
+
     private suspend fun fetchYouTubeInnertube(
         cleanUrl: String,
         resolvedUrl: String,
@@ -348,108 +411,81 @@ class TikTokApiService(
                 ?: return@withContext Result.failure(Exception("ID video YouTube tidak ditemukan"))
 
             val canonicalUrl = "https://www.youtube.com/watch?v=$videoId"
+            val targetRes = quality.replace("p", "").ifBlank { "1080" }
 
             // Ambil oEmbed secara paralel untuk judul, channel, dan thumbnail resmi
             val oEmbedDeferred = async { fetchYouTubeOEmbed(canonicalUrl) }
 
-            // Ambil progressive stream (video + audio muxed) melalui client ANDROID
-            val videoPayload = mapOf(
-                "videoId" to videoId,
-                "racyCheckOk" to true,
-                "contentCheckOk" to true,
-                "context" to mapOf(
-                    "client" to mapOf(
-                        "clientName" to "ANDROID",
-                        "clientVersion" to "21.26.364",
-                        "androidSdkVersion" to 30,
-                        "osName" to "Android",
-                        "osVersion" to "11",
-                        "hl" to "en",
-                        "gl" to "US"
-                    )
-                )
-            )
+            // Ambil stream dari client ANDROID (progressive itag 18) dan IOS (adaptive 1080p/720p/480p + audio AAC)
+            val androidDeferred = async { requestInnertubePlayer(videoId, isIos = false) }
+            val iosDeferred = async { requestInnertubePlayer(videoId, isIos = true) }
 
-            val videoRequest = Request.Builder()
-                .url("https://www.youtube.com/youtubei/v1/player")
-                .header("Content-Type", "application/json")
-                .header("User-Agent", "com.google.android.youtube/21.26.364 (Linux; U; Android 11) gzip")
-                .header("Accept", "application/json")
-                .post(gson.toJson(videoPayload).toRequestBody(JSON_MEDIA_TYPE))
-                .build()
+            val androidResp = androidDeferred.await()
+            val iosResp = iosDeferred.await()
 
-            val videoResponse = client.newCall(videoRequest).execute()
-            if (!videoResponse.isSuccessful) {
-                return@withContext Result.failure(Exception("YouTube API gagal merespon (HTTP ${videoResponse.code})"))
+            if (androidResp == null && iosResp == null) {
+                return@withContext Result.failure(Exception("YouTube API gagal merespon"))
             }
 
-            val videoBody = videoResponse.body?.string()
-                ?: return@withContext Result.failure(Exception("Respon YouTube kosong"))
-            val playerResp = gson.fromJson(videoBody, InnertubePlayerResponse::class.java)
-
-            val status = playerResp?.playabilityStatus?.status
+            val playerResp = iosResp ?: androidResp!!
+            val status = playerResp.playabilityStatus?.status
             if (status != "OK") {
-                val reason = playerResp?.playabilityStatus?.reason
+                val reason = playerResp.playabilityStatus?.reason
                     ?: "Video YouTube tidak dapat diputar (Status: $status)"
                 return@withContext Result.failure(Exception(reason))
             }
 
-            val formats = playerResp.streamingData?.formats ?: emptyList()
-            val validFormats = formats.filter { !it.url.isNullOrBlank() }
-            val chosenFormat = validFormats.maxByOrNull { it.bitrate ?: 0L }
+            // Progressive 360p stream dari ANDROID (itag 18)
+            val androidFormats = androidResp?.streamingData?.formats ?: emptyList()
+            val progressiveFormat = androidFormats.firstOrNull { it.itag == 18 && !it.url.isNullOrBlank() }
+                ?: androidFormats.firstOrNull { !it.url.isNullOrBlank() }
 
-            val videoUrl = chosenFormat?.url
+            // Adaptive video formats (H.264 / MP4) dari IOS
+            val iosAdaptives = iosResp?.streamingData?.adaptiveFormats ?: emptyList()
+            val mp4Videos = iosAdaptives.filter {
+                it.mimeType?.startsWith("video/mp4") == true && !it.url.isNullOrBlank()
+            }
+
+            // Audio track AAC / M4A dari IOS
+            val audioFormat = iosAdaptives.firstOrNull {
+                it.mimeType?.startsWith("audio/mp4") == true && !it.url.isNullOrBlank()
+            }
+
+            var chosenFormat: InnertubeFormat? = null
+            var isAdaptive = false
+
+            if (targetRes == "360" && progressiveFormat != null) {
+                chosenFormat = progressiveFormat
+                isAdaptive = false
+            } else {
+                // Cari format spesifik sesuai resolusi yang diminta (1080p, 720p, 480p)
+                val exactMatch = mp4Videos.firstOrNull { it.qualityLabel == "${targetRes}p" }
+                if (exactMatch != null && audioFormat != null) {
+                    chosenFormat = exactMatch
+                    isAdaptive = true
+                } else {
+                    // Fallback ke kualitas terbaik yang tersedia
+                    val bestAdaptive = mp4Videos.maxByOrNull { it.bitrate ?: 0L }
+                    if (bestAdaptive != null && audioFormat != null) {
+                        chosenFormat = bestAdaptive
+                        isAdaptive = true
+                    } else if (progressiveFormat != null) {
+                        chosenFormat = progressiveFormat
+                        isAdaptive = false
+                    }
+                }
+            }
+
+            val videoUrl = chosenFormat?.url ?: progressiveFormat?.url
             if (videoUrl.isNullOrBlank()) {
                 return@withContext Result.failure(Exception("Format video YouTube tidak tersedia untuk diunduh"))
             }
 
-            // Ambil stream audio m4a/aac melalui client IOS
-            val audioFormatDeferred = async {
-                try {
-                    val audioPayload = mapOf(
-                        "videoId" to videoId,
-                        "racyCheckOk" to true,
-                        "contentCheckOk" to true,
-                        "context" to mapOf(
-                            "client" to mapOf(
-                                "clientName" to "IOS",
-                                "clientVersion" to "20.10.4",
-                                "deviceMake" to "Apple",
-                                "deviceModel" to "iPhone16,2",
-                                "osName" to "iPhone",
-                                "osVersion" to "18.3.2.22D82",
-                                "hl" to "en",
-                                "gl" to "US"
-                            )
-                        )
-                    )
-
-                    val audioRequest = Request.Builder()
-                        .url("https://www.youtube.com/youtubei/v1/player")
-                        .header("Content-Type", "application/json")
-                        .header("User-Agent", "com.google.ios.youtube/20.10.4 (iPhone16,2; U; CPU iOS 18_3_2 like Mac OS X; en_US)")
-                        .header("Accept", "application/json")
-                        .post(gson.toJson(audioPayload).toRequestBody(JSON_MEDIA_TYPE))
-                        .build()
-
-                    val audioResp = client.newCall(audioRequest).execute()
-                    if (audioResp.isSuccessful) {
-                        val aBody = audioResp.body?.string()
-                        val aJson = gson.fromJson(aBody, InnertubePlayerResponse::class.java)
-                        val adaptives = aJson?.streamingData?.adaptiveFormats ?: emptyList()
-                        adaptives.filter { it.mimeType?.startsWith("audio/mp4") == true && !it.url.isNullOrBlank() }
-                            .maxByOrNull { it.bitrate ?: 0L }
-                            ?.url
-                    } else null
-                } catch (_: Exception) {
-                    null
-                }
-            }
+            val hdFormat = mp4Videos.firstOrNull { it.qualityLabel == "1080p" }
+            val hdVideoUrl = hdFormat?.url ?: chosenFormat?.url
 
             val ytOEmbed = oEmbedDeferred.await()
-            val musicUrl = audioFormatDeferred.await()
-
-            val details = playerResp.videoDetails
+            val details = playerResp.videoDetails ?: androidResp?.videoDetails
             val title = ytOEmbed?.title?.ifBlank { null }
                 ?: details?.title?.ifBlank { null }
                 ?: "YouTube Video"
@@ -466,9 +502,13 @@ class TikTokApiService(
                 ?: "https://i.ytimg.com/vi/$videoId/hqdefault.jpg"
 
             val duration = details?.lengthSeconds?.toIntOrNull()
-                ?: ((chosenFormat.approxDurationMs?.toLongOrNull() ?: 0L) / 1000L).toInt()
+                ?: ((chosenFormat?.approxDurationMs?.toLongOrNull() ?: 0L) / 1000L).toInt()
 
-            val sizeBytes = chosenFormat.contentLength?.toLongOrNull() ?: 0L
+            val videoBytes = chosenFormat?.contentLength?.toLongOrNull() ?: 0L
+            val audioBytes = if (isAdaptive) (audioFormat?.contentLength?.toLongOrNull() ?: 0L) else 0L
+            val totalBytes = videoBytes + audioBytes
+
+            val qualityLabel = chosenFormat?.qualityLabel ?: "${targetRes}p"
 
             val media = TikTokMedia(
                 id = videoId,
@@ -478,18 +518,21 @@ class TikTokApiService(
                 authorAvatar = "",
                 coverUrl = coverUrl,
                 videoUrl = videoUrl,
-                hdVideoUrl = videoUrl,
+                hdVideoUrl = hdVideoUrl,
                 wmVideoUrl = null,
-                musicUrl = musicUrl,
-                musicTitle = if (musicUrl != null) "$title (Audio)" else null,
+                previewUrl = progressiveFormat?.url ?: videoUrl,
+                isAdaptiveStream = isAdaptive,
+                musicUrl = audioFormat?.url,
+                musicTitle = if (audioFormat != null) "$title (Audio)" else null,
                 duration = duration,
-                sizeBytes = sizeBytes,
+                sizeBytes = totalBytes,
                 isImagesPost = false,
                 images = emptyList(),
                 originalUrl = canonicalUrl,
                 platform = "YouTube",
                 description = title,
-                selectedQuality = chosenFormat.qualityLabel ?: "360p"
+                availableResolutions = listOf("1080p", "720p", "480p", "360p"),
+                selectedQuality = qualityLabel
             )
 
             Result.success(media)
@@ -577,7 +620,7 @@ class TikTokApiService(
                 .url(endpoint)
                 .header("Accept", "application/json")
                 .header("Content-Type", "application/json")
-                .header("User-Agent", "LibreTok/1.0.4")
+                .header("User-Agent", "LibreTok/${BuildConfig.VERSION_NAME}")
                 .post(jsonString.toRequestBody(JSON_MEDIA_TYPE))
                 .build()
 

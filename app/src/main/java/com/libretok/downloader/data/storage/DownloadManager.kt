@@ -8,6 +8,10 @@ import android.os.Build
 import android.os.Environment
 import android.provider.MediaStore
 import androidx.core.content.FileProvider
+import android.media.MediaCodec
+import android.media.MediaExtractor
+import android.media.MediaFormat
+import android.media.MediaMuxer
 import com.libretok.downloader.data.model.ActiveDownload
 import com.libretok.downloader.data.model.DownloadItem
 import com.libretok.downloader.data.model.DownloadStatus
@@ -21,9 +25,11 @@ import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import java.io.File
+import java.io.FileInputStream
 import java.io.FileOutputStream
 import java.io.InputStream
 import java.io.OutputStream
+import java.nio.ByteBuffer
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.TimeUnit
 
@@ -67,6 +73,14 @@ class DownloadManager(
         }
 
         val downloadId = "${media.id}_${type.name}_${System.currentTimeMillis()}"
+
+        // Jika adaptive stream (seperti YouTube 1080p/720p/480p), unduh video + audio lalu gabungkan dengan MediaMuxer
+        if ((type == DownloadType.VIDEO || type == DownloadType.HD_VIDEO) && media.isAdaptiveStream && !media.musicUrl.isNullOrBlank()) {
+            val adaptiveResult = downloadAndMuxAdaptiveMedia(media, type, customFileName, downloadId)
+            if (adaptiveResult.isSuccess) {
+                return@withContext adaptiveResult
+            }
+        }
 
         val candidateUrls = when (type) {
             DownloadType.VIDEO -> {
@@ -352,6 +366,295 @@ class DownloadManager(
             )
         )
         Result.failure(lastException ?: Exception("Gagal mengunduh berkas"))
+    }
+
+    private suspend fun downloadAndMuxAdaptiveMedia(
+        media: TikTokMedia,
+        type: DownloadType,
+        customFileName: String?,
+        downloadId: String
+    ): Result<DownloadItem> = withContext(Dispatchers.IO) {
+        val targetVideoUrl = if (type == DownloadType.HD_VIDEO && !media.hdVideoUrl.isNullOrBlank()) {
+            media.hdVideoUrl
+        } else {
+            media.videoUrl
+        }
+        val targetAudioUrl = media.musicUrl ?: return@withContext Result.failure(Exception("Audio URL tidak ditemukan"))
+
+        val baseTitle = if (!customFileName.isNullOrBlank()) {
+            sanitizeFilename(customFileName)
+        } else {
+            sanitizeFilename(media.title.ifBlank { "LibreTok_${media.platform}_${media.id}" })
+        }
+        val fileName = if (!customFileName.isNullOrBlank()) {
+            "${baseTitle}.mp4"
+        } else {
+            "LibreTok_${baseTitle}_${System.currentTimeMillis()}.mp4"
+        }
+
+        updateActiveDownload(
+            ActiveDownload(
+                id = downloadId,
+                title = media.title,
+                type = type,
+                progress = 0f,
+                status = DownloadStatus.DOWNLOADING
+            )
+        )
+
+        var tempVideo: File? = null
+        var tempAudio: File? = null
+        var tempMuxed: File? = null
+        var savedFile: File? = null
+        var savedUri: Uri? = null
+
+        try {
+            tempVideo = File(context.cacheDir, "temp_v_${System.currentTimeMillis()}.mp4")
+            tempAudio = File(context.cacheDir, "temp_a_${System.currentTimeMillis()}.m4a")
+            tempMuxed = File(context.cacheDir, "temp_m_${System.currentTimeMillis()}.mp4")
+
+            // 1. Unduh track video berkualitas tinggi (0% -> 85%)
+            val vReq = Request.Builder().url(targetVideoUrl).header("Accept", "*/*").build()
+            val vResp = client.newCall(vReq).execute()
+            if (!vResp.isSuccessful) throw Exception("Gagal mengunduh track video (HTTP ${vResp.code})")
+            val vBody = vResp.body ?: throw Exception("Track video kosong")
+            val vTotal = vBody.contentLength()
+
+            FileOutputStream(tempVideo).use { out ->
+                copyStream(downloadId, vBody.byteStream(), out, vTotal) { prog, copied ->
+                    updateActiveDownload(
+                        ActiveDownload(
+                            id = downloadId,
+                            title = media.title,
+                            type = type,
+                            progress = prog * 0.85f,
+                            bytesDownloaded = copied,
+                            totalBytes = if (vTotal > 0) vTotal else copied,
+                            status = DownloadStatus.DOWNLOADING
+                        )
+                    )
+                }
+            }
+
+            if (cancelledTasks[downloadId] == true) {
+                throw Exception("Unduhan dibatalkan")
+            }
+
+            // 2. Unduh track audio AAC jernih (85% -> 95%)
+            val aReq = Request.Builder().url(targetAudioUrl).header("Accept", "*/*").build()
+            val aResp = client.newCall(aReq).execute()
+            if (!aResp.isSuccessful) throw Exception("Gagal mengunduh track audio (HTTP ${aResp.code})")
+            val aBody = aResp.body ?: throw Exception("Track audio kosong")
+            val aTotal = aBody.contentLength()
+
+            FileOutputStream(tempAudio).use { out ->
+                copyStream(downloadId, aBody.byteStream(), out, aTotal) { prog, copied ->
+                    updateActiveDownload(
+                        ActiveDownload(
+                            id = downloadId,
+                            title = media.title,
+                            type = type,
+                            progress = 0.85f + (prog * 0.10f),
+                            bytesDownloaded = vTotal + copied,
+                            totalBytes = (if (vTotal > 0) vTotal else 0L) + (if (aTotal > 0) aTotal else copied),
+                            status = DownloadStatus.DOWNLOADING
+                        )
+                    )
+                }
+            }
+
+            if (cancelledTasks[downloadId] == true) {
+                throw Exception("Unduhan dibatalkan")
+            }
+
+            // 3. Muxing video + audio menjadi satu file MP4 (95% -> 99%)
+            updateActiveDownload(
+                ActiveDownload(
+                    id = downloadId,
+                    title = media.title,
+                    type = type,
+                    progress = 0.96f,
+                    status = DownloadStatus.DOWNLOADING
+                )
+            )
+
+            muxVideoAndAudio(tempVideo, tempAudio, tempMuxed)
+
+            if (!tempMuxed.exists() || tempMuxed.length() == 0L) {
+                throw Exception("Gagal menggabungkan berkas video dan audio")
+            }
+
+            val finalLength = tempMuxed.length()
+
+            // 4. Simpan hasil muxing ke penyimpanan publik (Movies/LibreTok)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                val contentValues = ContentValues().apply {
+                    put(MediaStore.MediaColumns.DISPLAY_NAME, fileName)
+                    put(MediaStore.MediaColumns.MIME_TYPE, "video/mp4")
+                    put(MediaStore.MediaColumns.RELATIVE_PATH, Environment.DIRECTORY_MOVIES + "/LibreTok")
+                    put(MediaStore.MediaColumns.IS_PENDING, 1)
+                }
+
+                val uri = context.contentResolver.insert(
+                    MediaStore.Video.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY),
+                    contentValues
+                ) ?: throw Exception("Gagal membuat entri penyimpanan MediaStore")
+                savedUri = uri
+
+                context.contentResolver.openOutputStream(uri).use { outStream ->
+                    if (outStream == null) throw Exception("Gagal membuka stream output MediaStore")
+                    FileInputStream(tempMuxed).use { inStream ->
+                        inStream.copyTo(outStream)
+                    }
+                }
+
+                contentValues.clear()
+                contentValues.put(MediaStore.MediaColumns.IS_PENDING, 0)
+                context.contentResolver.update(uri, contentValues, null, null)
+
+                val fallbackFile = File(
+                    Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_MOVIES),
+                    "LibreTok/$fileName"
+                )
+                savedFile = fallbackFile
+            } else {
+                val publicDir = File(
+                    Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_MOVIES),
+                    "LibreTok"
+                )
+                if (!publicDir.exists()) publicDir.mkdirs()
+
+                val file = File(publicDir, fileName)
+                savedFile = file
+                FileInputStream(tempMuxed).use { inStream ->
+                    FileOutputStream(file).use { outStream ->
+                        inStream.copyTo(outStream)
+                    }
+                }
+                savedUri = Uri.fromFile(file)
+            }
+
+            updateActiveDownload(
+                ActiveDownload(
+                    id = downloadId,
+                    title = media.title,
+                    type = type,
+                    progress = 1f,
+                    bytesDownloaded = finalLength,
+                    totalBytes = finalLength,
+                    status = DownloadStatus.COMPLETED
+                )
+            )
+
+            val downloadItem = DownloadItem(
+                id = downloadId,
+                title = media.title,
+                author = "${media.authorName} (@${media.authorUsername})",
+                thumbnailUri = media.coverUrl,
+                filePath = savedFile.absolutePath,
+                fileUri = savedUri?.toString() ?: "",
+                type = type,
+                fileSizeBytes = finalLength,
+                durationSeconds = media.duration,
+                timestamp = System.currentTimeMillis(),
+                sourceUrl = media.originalUrl
+            )
+
+            historyRepository.addItem(downloadItem)
+            removeActiveDownload(downloadId)
+            Result.success(downloadItem)
+        } catch (e: Exception) {
+            updateActiveDownload(
+                ActiveDownload(
+                    id = downloadId,
+                    title = media.title,
+                    type = type,
+                    status = DownloadStatus.FAILED,
+                    errorMessage = e.message ?: "Gagal mengunduh media"
+                )
+            )
+            savedUri?.let { uri ->
+                try { context.contentResolver.delete(uri, null, null) } catch (_: Exception) {}
+            }
+            savedFile?.let { if (it.exists()) it.delete() }
+            Result.failure(e)
+        } finally {
+            try { tempVideo?.delete() } catch (_: Exception) {}
+            try { tempAudio?.delete() } catch (_: Exception) {}
+            try { tempMuxed?.delete() } catch (_: Exception) {}
+        }
+    }
+
+    private fun muxVideoAndAudio(videoFile: File, audioFile: File, outputFile: File) {
+        var videoExtractor: MediaExtractor? = null
+        var audioExtractor: MediaExtractor? = null
+        var muxer: MediaMuxer? = null
+
+        try {
+            videoExtractor = MediaExtractor().apply { setDataSource(videoFile.absolutePath) }
+            audioExtractor = MediaExtractor().apply { setDataSource(audioFile.absolutePath) }
+            muxer = MediaMuxer(outputFile.absolutePath, MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4)
+
+            var videoTrackIndex = -1
+            for (i in 0 until videoExtractor.trackCount) {
+                val format = videoExtractor.getTrackFormat(i)
+                val mime = format.getString(MediaFormat.KEY_MIME) ?: ""
+                if (mime.startsWith("video/")) {
+                    videoExtractor.selectTrack(i)
+                    videoTrackIndex = muxer.addTrack(format)
+                    break
+                }
+            }
+
+            var audioTrackIndex = -1
+            for (i in 0 until audioExtractor.trackCount) {
+                val format = audioExtractor.getTrackFormat(i)
+                val mime = format.getString(MediaFormat.KEY_MIME) ?: ""
+                if (mime.startsWith("audio/")) {
+                    audioExtractor.selectTrack(i)
+                    audioTrackIndex = muxer.addTrack(format)
+                    break
+                }
+            }
+
+            if (videoTrackIndex == -1) {
+                throw Exception("Track video tidak ditemukan dalam berkas")
+            }
+
+            muxer.start()
+
+            val buffer = ByteBuffer.allocate(1024 * 1024)
+            val bufferInfo = MediaCodec.BufferInfo()
+
+            while (true) {
+                val sampleSize = videoExtractor.readSampleData(buffer, 0)
+                if (sampleSize < 0) break
+                bufferInfo.offset = 0
+                bufferInfo.size = sampleSize
+                bufferInfo.presentationTimeUs = videoExtractor.sampleTime
+                bufferInfo.flags = videoExtractor.sampleFlags
+                muxer.writeSampleData(videoTrackIndex, buffer, bufferInfo)
+                videoExtractor.advance()
+            }
+
+            if (audioTrackIndex != -1) {
+                while (true) {
+                    val sampleSize = audioExtractor.readSampleData(buffer, 0)
+                    if (sampleSize < 0) break
+                    bufferInfo.offset = 0
+                    bufferInfo.size = sampleSize
+                    bufferInfo.presentationTimeUs = audioExtractor.sampleTime
+                    bufferInfo.flags = audioExtractor.sampleFlags
+                    muxer.writeSampleData(audioTrackIndex, buffer, bufferInfo)
+                    audioExtractor.advance()
+                }
+            }
+        } finally {
+            try { muxer?.stop() } catch (_: Exception) {}
+            try { muxer?.release() } catch (_: Exception) {}
+            try { videoExtractor?.release() } catch (_: Exception) {}
+            try { audioExtractor?.release() } catch (_: Exception) {}
+        }
     }
 
     suspend fun downloadPhotos(

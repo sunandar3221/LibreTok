@@ -11,8 +11,8 @@ android {
         applicationId = "com.libretok.downloader"
         minSdk = 24
         targetSdk = 34
-        versionCode = 6
-        versionName = "1.0.5"
+        versionCode = 7
+        versionName = "1.0.6"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {
@@ -58,6 +58,14 @@ android {
     }
     buildFeatures {
         compose = true
+        buildConfig = true
+    }
+
+    applicationVariants.all {
+        val variant = this
+        outputs.all {
+            (this as? com.android.build.gradle.internal.api.BaseVariantOutputImpl)?.outputFileName = "LibreTok-v${variant.versionName}.apk"
+        }
     }
     composeOptions {
         kotlinCompilerExtensionVersion = "1.5.11"

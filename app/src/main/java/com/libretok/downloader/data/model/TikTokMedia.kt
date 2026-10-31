@@ -12,6 +12,8 @@ data class TikTokMedia(
     val videoUrl: String,
     val hdVideoUrl: String?,
     val wmVideoUrl: String? = null,
+    val previewUrl: String? = null,
+    val isAdaptiveStream: Boolean = false,
     val musicUrl: String?,
     val musicTitle: String?,
     val duration: Int,

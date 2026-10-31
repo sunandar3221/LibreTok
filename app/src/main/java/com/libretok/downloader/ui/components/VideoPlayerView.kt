@@ -47,7 +47,7 @@ fun VideoPlayerDialog(
             val url = if (target.isAudioOnly) {
                 target.media.musicUrl
             } else {
-                target.media.videoUrl
+                target.media.previewUrl ?: target.media.videoUrl
             }
             mediaUri = if (!url.isNullOrBlank()) Uri.parse(url) else null
         }

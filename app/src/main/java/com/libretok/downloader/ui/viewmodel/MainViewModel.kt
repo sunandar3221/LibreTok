@@ -3,6 +3,7 @@ package com.libretok.downloader.ui.viewmodel
 import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.libretok.downloader.BuildConfig
 import com.libretok.downloader.data.model.*
 import com.libretok.downloader.data.network.AppUpdateInfo
 import com.libretok.downloader.data.network.NetworkMonitor
@@ -246,7 +247,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 _isCheckingUpdate.value = true
                 _updateCheckMessage.value = null
             }
-            val result = updateChecker.checkUpdate("1.0.4")
+            val currentVersion = BuildConfig.VERSION_NAME
+            val result = updateChecker.checkUpdate(currentVersion)
             if (isManual) {
                 _isCheckingUpdate.value = false
             }
@@ -258,7 +260,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         _updateCheckMessage.value = "Versi ${info.latestVersion} tersedia!"
                     }
                 } else if (isManual) {
-                    _updateCheckMessage.value = "Anda sudah menggunakan versi terbaru (v1.0.4)!"
+                    _updateCheckMessage.value = "Anda sudah menggunakan versi terbaru (v$currentVersion)!"
                 }
             }.onFailure { err ->
                 if (isManual) {

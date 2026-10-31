@@ -22,6 +22,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.libretok.downloader.BuildConfig
 import com.libretok.downloader.ui.theme.TikTokCyan
 import com.libretok.downloader.ui.theme.TikTokPink
 import com.libretok.downloader.ui.viewmodel.MainViewModel
@@ -426,7 +427,7 @@ fun SettingsScreen(
                         SettingsInfoRow(
                             icon = Icons.Default.Info,
                             title = "Versi Aplikasi",
-                            value = "LibreTok v1.0.4 (Signed Release)"
+                            value = "LibreTok v${BuildConfig.VERSION_NAME} (Signed Release)"
                         )
                         HorizontalDivider(modifier = Modifier.padding(vertical = 12.dp))
                         SettingsInfoRow(
