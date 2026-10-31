@@ -90,6 +90,7 @@ class DownloadManager(
                 }
                 if (media.videoUrl.isNotBlank()) list.add(media.videoUrl)
                 if (!media.hdVideoUrl.isNullOrBlank()) list.add(media.hdVideoUrl)
+                if (!media.previewUrl.isNullOrBlank()) list.add(media.previewUrl)
                 if (!media.wmVideoUrl.isNullOrBlank()) list.add(media.wmVideoUrl)
                 list.distinct()
             }
@@ -97,10 +98,17 @@ class DownloadManager(
                 val list = mutableListOf<String>()
                 if (!media.hdVideoUrl.isNullOrBlank()) list.add(media.hdVideoUrl)
                 if (media.videoUrl.isNotBlank()) list.add(media.videoUrl)
+                if (!media.previewUrl.isNullOrBlank()) list.add(media.previewUrl)
                 if (!media.wmVideoUrl.isNullOrBlank()) list.add(media.wmVideoUrl)
                 list.distinct()
             }
-            DownloadType.AUDIO -> listOfNotNull(media.musicUrl?.ifBlank { null })
+            DownloadType.AUDIO -> {
+                val list = mutableListOf<String>()
+                if (!media.musicUrl.isNullOrBlank()) list.add(media.musicUrl)
+                if (!media.previewUrl.isNullOrBlank()) list.add(media.previewUrl)
+                if (media.videoUrl.isNotBlank()) list.add(media.videoUrl)
+                list.distinct()
+            }
             DownloadType.PHOTO -> listOfNotNull((media.images.firstOrNull() ?: media.coverUrl).ifBlank { null })
         }
 
@@ -183,6 +191,7 @@ class DownloadManager(
                 when {
                     host.contains("tikwm.com") -> requestBuilder.header("Referer", "https://www.tikwm.com/")
                     host.contains("tiktok.com") -> requestBuilder.header("Referer", "https://www.tiktok.com/")
+                    host.contains("googlevideo.com") -> requestBuilder.header("User-Agent", "com.google.android.youtube/21.26.364 (Linux; U; Android 11)")
                 }
 
                 val response = client.newCall(requestBuilder.build()).execute()
@@ -414,54 +423,32 @@ class DownloadManager(
             tempMuxed = File(context.cacheDir, "temp_m_${System.currentTimeMillis()}.mp4")
 
             // 1. Unduh track video berkualitas tinggi (0% -> 85%)
-            val vReq = Request.Builder().url(targetVideoUrl).header("Accept", "*/*").build()
-            val vResp = client.newCall(vReq).execute()
-            if (!vResp.isSuccessful) throw Exception("Gagal mengunduh track video (HTTP ${vResp.code})")
-            val vBody = vResp.body ?: throw Exception("Track video kosong")
-            val vTotal = vBody.contentLength()
-
-            FileOutputStream(tempVideo).use { out ->
-                copyStream(downloadId, vBody.byteStream(), out, vTotal) { prog, copied ->
-                    updateActiveDownload(
-                        ActiveDownload(
-                            id = downloadId,
-                            title = media.title,
-                            type = type,
-                            progress = prog * 0.85f,
-                            bytesDownloaded = copied,
-                            totalBytes = if (vTotal > 0) vTotal else copied,
-                            status = DownloadStatus.DOWNLOADING
-                        )
-                    )
-                }
-            }
+            downloadTrackToFile(
+                downloadId = downloadId,
+                url = targetVideoUrl,
+                destinationFile = tempVideo,
+                mediaTitle = media.title,
+                type = type,
+                progressBase = 0f,
+                progressScale = 0.85f,
+                totalBytesEstimated = if (media.sizeBytes > 0) (media.sizeBytes * 85 / 100) else 15_000_000L
+            )
 
             if (cancelledTasks[downloadId] == true) {
                 throw Exception("Unduhan dibatalkan")
             }
 
             // 2. Unduh track audio AAC jernih (85% -> 95%)
-            val aReq = Request.Builder().url(targetAudioUrl).header("Accept", "*/*").build()
-            val aResp = client.newCall(aReq).execute()
-            if (!aResp.isSuccessful) throw Exception("Gagal mengunduh track audio (HTTP ${aResp.code})")
-            val aBody = aResp.body ?: throw Exception("Track audio kosong")
-            val aTotal = aBody.contentLength()
-
-            FileOutputStream(tempAudio).use { out ->
-                copyStream(downloadId, aBody.byteStream(), out, aTotal) { prog, copied ->
-                    updateActiveDownload(
-                        ActiveDownload(
-                            id = downloadId,
-                            title = media.title,
-                            type = type,
-                            progress = 0.85f + (prog * 0.10f),
-                            bytesDownloaded = vTotal + copied,
-                            totalBytes = (if (vTotal > 0) vTotal else 0L) + (if (aTotal > 0) aTotal else copied),
-                            status = DownloadStatus.DOWNLOADING
-                        )
-                    )
-                }
-            }
+            downloadTrackToFile(
+                downloadId = downloadId,
+                url = targetAudioUrl,
+                destinationFile = tempAudio,
+                mediaTitle = media.title,
+                type = type,
+                progressBase = 0.85f,
+                progressScale = 0.10f,
+                totalBytesEstimated = if (media.sizeBytes > 0) (media.sizeBytes * 15 / 100) else 1_500_000L
+            )
 
             if (cancelledTasks[downloadId] == true) {
                 throw Exception("Unduhan dibatalkan")
@@ -582,6 +569,124 @@ class DownloadManager(
             try { tempVideo?.delete() } catch (_: Exception) {}
             try { tempAudio?.delete() } catch (_: Exception) {}
             try { tempMuxed?.delete() } catch (_: Exception) {}
+        }
+    }
+
+    private fun downloadTrackToFile(
+        downloadId: String,
+        url: String,
+        destinationFile: File,
+        mediaTitle: String,
+        type: DownloadType,
+        progressBase: Float,
+        progressScale: Float,
+        totalBytesEstimated: Long,
+        onBytesCopied: (Long) -> Unit = {}
+    ) {
+        val isGoogleVideo = url.contains("googlevideo.com")
+        val ua = if (isGoogleVideo) {
+            "com.google.ios.youtube/20.10.4 (iPhone16,2; U; CPU iOS 18_3_2 like Mac OS X; en_US)"
+        } else {
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+        }
+
+        if (!isGoogleVideo) {
+            val req = Request.Builder().url(url).header("User-Agent", ua).header("Accept", "*/*").build()
+            val resp = client.newCall(req).execute()
+            if (!resp.isSuccessful) throw Exception("Server menolak unduhan track (HTTP ${resp.code})")
+            val body = resp.body ?: throw Exception("Konten track kosong")
+            val total = body.contentLength()
+            FileOutputStream(destinationFile).use { outStream ->
+                copyStream(downloadId, body.byteStream(), outStream, total) { prog, copied ->
+                    onBytesCopied(copied)
+                    updateActiveDownload(
+                        ActiveDownload(
+                            id = downloadId,
+                            title = mediaTitle,
+                            type = type,
+                            progress = progressBase + (prog * progressScale),
+                            bytesDownloaded = copied,
+                            totalBytes = if (total > 0) total else copied,
+                            status = DownloadStatus.DOWNLOADING
+                        )
+                    )
+                }
+            }
+            return
+        }
+
+        // Chunked Range downloader untuk GoogleVideo adaptive streams (mencegah HTTP 403)
+        var downloaded = 0L
+        val maxChunk = 1024 * 1024L // 1 MB per chunk
+        var currChunk = maxChunk
+        val totalExpected = if (totalBytesEstimated > 0) totalBytesEstimated else 10_000_000L
+
+        FileOutputStream(destinationFile).use { outStream ->
+            while (true) {
+                if (cancelledTasks[downloadId] == true) {
+                    throw Exception("Unduhan dibatalkan")
+                }
+
+                val rangeHeader = "bytes=$downloaded-${downloaded + currChunk - 1}"
+                val req = Request.Builder()
+                    .url(url)
+                    .header("User-Agent", ua)
+                    .header("Range", rangeHeader)
+                    .header("Accept", "*/*")
+                    .build()
+
+                try {
+                    val resp = client.newCall(req).execute()
+                    if (resp.code == 206) {
+                        val body = resp.body ?: break
+                        val bytes = body.bytes()
+                        if (bytes.isEmpty()) break
+                        outStream.write(bytes)
+                        downloaded += bytes.size
+                        onBytesCopied(downloaded)
+
+                        val prog = (downloaded.toFloat() / totalExpected.toFloat()).coerceIn(0f, 1f)
+                        updateActiveDownload(
+                            ActiveDownload(
+                                id = downloadId,
+                                title = mediaTitle,
+                                type = type,
+                                progress = progressBase + (prog * progressScale),
+                                bytesDownloaded = downloaded,
+                                totalBytes = maxOf(totalExpected, downloaded),
+                                status = DownloadStatus.DOWNLOADING
+                            )
+                        )
+
+                        if (currChunk < maxChunk) {
+                            currChunk = minOf(currChunk * 2, maxChunk)
+                        }
+
+                        if (bytes.size < currChunk) {
+                            break
+                        }
+                    } else if (resp.code == 403 || resp.code == 416) {
+                        if (currChunk > 8192) {
+                            currChunk /= 2
+                        } else if (downloaded > 0) {
+                            break
+                        } else {
+                            throw Exception("Server menolak akses track GoogleVideo (HTTP ${resp.code})")
+                        }
+                    } else {
+                        if (downloaded > 0) break
+                        throw Exception("Gagal mengunduh track GoogleVideo (HTTP ${resp.code})")
+                    }
+                } catch (e: Exception) {
+                    if (cancelledTasks[downloadId] == true) throw e
+                    if (downloaded > 0) break
+                    throw e
+                }
+            }
+        }
+
+        if (downloaded <= 0L) {
+            throw Exception("Track GoogleVideo kosong (0 bytes diterima)")
         }
     }
 

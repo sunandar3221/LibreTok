@@ -519,7 +519,7 @@ class TikTokApiService(
                 coverUrl = coverUrl,
                 videoUrl = videoUrl,
                 hdVideoUrl = hdVideoUrl,
-                wmVideoUrl = null,
+                wmVideoUrl = progressiveFormat?.url,
                 previewUrl = progressiveFormat?.url ?: videoUrl,
                 isAdaptiveStream = isAdaptive,
                 musicUrl = audioFormat?.url,
