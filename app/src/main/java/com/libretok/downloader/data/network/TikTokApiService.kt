@@ -178,7 +178,7 @@ class TikTokApiService(
                 authorUsername = data.author?.uniqueId ?: "",
                 authorAvatar = avatarUrl,
                 coverUrl = coverUrl,
-                videoUrl = if (quality == "1080" && !hdPlayUrl.isNullOrBlank()) hdPlayUrl else playUrl,
+                videoUrl = playUrl,
                 hdVideoUrl = hdPlayUrl,
                 musicUrl = musicUrl,
                 musicTitle = data.musicInfo?.title ?: "Original Sound",

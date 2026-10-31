@@ -25,11 +25,19 @@ import java.io.FileOutputStream
 import java.io.InputStream
 import java.io.OutputStream
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.TimeUnit
 
 class DownloadManager(
     private val context: Context,
     private val historyRepository: HistoryRepository,
-    private val client: OkHttpClient = OkHttpClient()
+    private val client: OkHttpClient = OkHttpClient.Builder()
+        .connectTimeout(30, TimeUnit.SECONDS)
+        .readTimeout(120, TimeUnit.SECONDS)
+        .writeTimeout(60, TimeUnit.SECONDS)
+        .followRedirects(true)
+        .followSslRedirects(true)
+        .retryOnConnectionFailure(true)
+        .build()
 ) {
 
     private val _activeDownloads = MutableStateFlow<Map<String, ActiveDownload>>(emptyMap())
@@ -59,15 +67,29 @@ class DownloadManager(
         }
 
         val downloadId = "${media.id}_${type.name}_${System.currentTimeMillis()}"
-        val targetUrl = when (type) {
-            DownloadType.VIDEO -> media.videoUrl
-            DownloadType.HD_VIDEO -> media.hdVideoUrl ?: media.videoUrl
-            DownloadType.AUDIO -> media.musicUrl ?: return@withContext Result.failure(Exception("Audio URL tidak ditemukan"))
-            DownloadType.PHOTO -> media.images.firstOrNull() ?: media.coverUrl
+
+        val candidateUrls = when (type) {
+            DownloadType.VIDEO -> {
+                val list = mutableListOf<String>()
+                if (media.selectedQuality == "1080p" && !media.hdVideoUrl.isNullOrBlank()) {
+                    list.add(media.hdVideoUrl)
+                }
+                if (media.videoUrl.isNotBlank()) list.add(media.videoUrl)
+                if (!media.hdVideoUrl.isNullOrBlank()) list.add(media.hdVideoUrl)
+                list.distinct()
+            }
+            DownloadType.HD_VIDEO -> {
+                val list = mutableListOf<String>()
+                if (!media.hdVideoUrl.isNullOrBlank()) list.add(media.hdVideoUrl)
+                if (media.videoUrl.isNotBlank()) list.add(media.videoUrl)
+                list.distinct()
+            }
+            DownloadType.AUDIO -> listOfNotNull(media.musicUrl?.ifBlank { null })
+            DownloadType.PHOTO -> listOfNotNull((media.images.firstOrNull() ?: media.coverUrl).ifBlank { null })
         }
 
-        if (targetUrl.isBlank()) {
-            return@withContext Result.failure(Exception("URL download tidak valid."))
+        if (candidateUrls.isEmpty()) {
+            return@withContext Result.failure(Exception("URL download tidak valid atau tidak ditemukan."))
         }
 
         val baseTitle = if (!customFileName.isNullOrBlank()) {
@@ -127,144 +149,195 @@ class DownloadManager(
             )
         )
 
-        try {
-            val request = Request.Builder()
-                .url(targetUrl)
-                .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64)")
-                .header("Referer", "https://www.tiktok.com/")
-                .build()
+        var lastException: Exception? = null
 
-            val response = client.newCall(request).execute()
-            if (!response.isSuccessful) {
-                throw Exception("Gagal mengunduh berkas (HTTP ${response.code})")
-            }
-
-            val body = response.body ?: throw Exception("Konten unduhan kosong")
-            val totalBytes = body.contentLength().coerceAtLeast(1L)
+        for (targetUrl in candidateUrls) {
+            var savedFile: File? = null
+            var savedUri: Uri? = null
             var bytesCopied = 0L
 
-            var savedFile: File?
-            val savedUri: Uri?
+            try {
+                val requestBuilder = Request.Builder()
+                    .url(targetUrl)
+                    .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+                    .header("Accept", "*/*")
 
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                val contentValues = ContentValues().apply {
-                    put(MediaStore.MediaColumns.DISPLAY_NAME, fileName)
-                    put(MediaStore.MediaColumns.MIME_TYPE, mimeType)
-                    put(MediaStore.MediaColumns.RELATIVE_PATH, subDir)
-                    put(MediaStore.MediaColumns.IS_PENDING, 1)
+                // Only set Referer when not hitting foreign CDNs that reject hotlinking
+                val isForeignCdn = targetUrl.contains("googlevideo.com") ||
+                        targetUrl.contains("cdninstagram.com") ||
+                        targetUrl.contains("fbcdn.net") ||
+                        targetUrl.contains("akamaized.net")
+
+                if (!isForeignCdn && media.platform == "TikTok") {
+                    requestBuilder.header("Referer", "https://www.tiktok.com/")
                 }
 
-                val uri = context.contentResolver.insert(collectionUri, contentValues)
-                    ?: throw Exception("Gagal membuat entri penyimpanan MediaStore")
-                savedUri = uri
+                val response = client.newCall(requestBuilder.build()).execute()
+                if (!response.isSuccessful) {
+                    throw Exception("Server gagal merespon (HTTP ${response.code})")
+                }
 
-                context.contentResolver.openOutputStream(uri).use { outStream ->
-                    if (outStream == null) throw Exception("Gagal membuka stream output MediaStore")
-                    copyStream(downloadId, body.byteStream(), outStream, totalBytes) { progress, copied ->
-                        bytesCopied = copied
-                        updateActiveDownload(
-                            ActiveDownload(
-                                id = downloadId,
-                                title = media.title,
-                                type = type,
-                                progress = progress,
-                                bytesDownloaded = copied,
-                                totalBytes = totalBytes,
-                                status = DownloadStatus.DOWNLOADING
-                            )
-                        )
+                val body = response.body ?: throw Exception("Konten unduhan kosong")
+
+                // Validasi tipe konten agar tidak menyimpan HTML/Text sebagai video yang menyebabkan file corrupt
+                val contentType = body.contentType()
+                if (contentType != null) {
+                    val mime = "${contentType.type}/${contentType.subtype}".lowercase()
+                    if (mime.contains("text") || mime.contains("html") || mime.contains("json")) {
+                        throw Exception("Tautan menghasilkan respon HTML/Teks, bukan media valid")
                     }
                 }
 
-                contentValues.clear()
-                contentValues.put(MediaStore.MediaColumns.IS_PENDING, 0)
-                context.contentResolver.update(uri, contentValues, null, null)
+                val expectedTotalBytes = body.contentLength()
 
-                // Try to get actual file path or fallback to Movies/LibreTok/fileName
-                val fallbackFile = File(
-                    Environment.getExternalStoragePublicDirectory(
-                        if (type == DownloadType.AUDIO) Environment.DIRECTORY_MUSIC
-                        else if (type == DownloadType.PHOTO) Environment.DIRECTORY_PICTURES
-                        else Environment.DIRECTORY_MOVIES
-                    ),
-                    "LibreTok/$fileName"
-                )
-                savedFile = fallbackFile
-
-            } else {
-                val publicDir = File(
-                    Environment.getExternalStoragePublicDirectory(
-                        if (type == DownloadType.AUDIO) Environment.DIRECTORY_MUSIC
-                        else if (type == DownloadType.PHOTO) Environment.DIRECTORY_PICTURES
-                        else Environment.DIRECTORY_MOVIES
-                    ),
-                    "LibreTok"
-                )
-                if (!publicDir.exists()) publicDir.mkdirs()
-
-                val file = File(publicDir, fileName)
-                savedFile = file
-
-                FileOutputStream(file).use { outStream ->
-                    copyStream(downloadId, body.byteStream(), outStream, totalBytes) { progress, copied ->
-                        bytesCopied = copied
-                        updateActiveDownload(
-                            ActiveDownload(
-                                id = downloadId,
-                                title = media.title,
-                                type = type,
-                                progress = progress,
-                                bytesDownloaded = copied,
-                                totalBytes = totalBytes,
-                                status = DownloadStatus.DOWNLOADING
-                            )
-                        )
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                    val contentValues = ContentValues().apply {
+                        put(MediaStore.MediaColumns.DISPLAY_NAME, fileName)
+                        put(MediaStore.MediaColumns.MIME_TYPE, mimeType)
+                        put(MediaStore.MediaColumns.RELATIVE_PATH, subDir)
+                        put(MediaStore.MediaColumns.IS_PENDING, 1)
                     }
+
+                    val uri = context.contentResolver.insert(collectionUri, contentValues)
+                        ?: throw Exception("Gagal membuat entri penyimpanan MediaStore")
+                    savedUri = uri
+
+                    context.contentResolver.openOutputStream(uri).use { outStream ->
+                        if (outStream == null) throw Exception("Gagal membuka stream output MediaStore")
+                        copyStream(downloadId, body.byteStream(), outStream, expectedTotalBytes) { progress, copied ->
+                            bytesCopied = copied
+                            updateActiveDownload(
+                                ActiveDownload(
+                                    id = downloadId,
+                                    title = media.title,
+                                    type = type,
+                                    progress = progress,
+                                    bytesDownloaded = copied,
+                                    totalBytes = if (expectedTotalBytes > 0) expectedTotalBytes else copied,
+                                    status = DownloadStatus.DOWNLOADING
+                                )
+                            )
+                        }
+                    }
+
+                    // Verifikasi kelengkapan berkas untuk mencegah berkas corrupt
+                    if (expectedTotalBytes > 0 && bytesCopied < expectedTotalBytes) {
+                        throw Exception("Unduhan tidak lengkap ($bytesCopied dari $expectedTotalBytes bytes)")
+                    }
+                    if (bytesCopied < 1024L) {
+                        throw Exception("Berkas unduhan corrupt / terlalu kecil ($bytesCopied bytes)")
+                    }
+
+                    contentValues.clear()
+                    contentValues.put(MediaStore.MediaColumns.IS_PENDING, 0)
+                    context.contentResolver.update(uri, contentValues, null, null)
+
+                    val fallbackFile = File(
+                        Environment.getExternalStoragePublicDirectory(
+                            if (type == DownloadType.AUDIO) Environment.DIRECTORY_MUSIC
+                            else if (type == DownloadType.PHOTO) Environment.DIRECTORY_PICTURES
+                            else Environment.DIRECTORY_MOVIES
+                        ),
+                        "LibreTok/$fileName"
+                    )
+                    savedFile = fallbackFile
+
+                } else {
+                    val publicDir = File(
+                        Environment.getExternalStoragePublicDirectory(
+                            if (type == DownloadType.AUDIO) Environment.DIRECTORY_MUSIC
+                            else if (type == DownloadType.PHOTO) Environment.DIRECTORY_PICTURES
+                            else Environment.DIRECTORY_MOVIES
+                        ),
+                        "LibreTok"
+                    )
+                    if (!publicDir.exists()) publicDir.mkdirs()
+
+                    val file = File(publicDir, fileName)
+                    savedFile = file
+
+                    FileOutputStream(file).use { outStream ->
+                        copyStream(downloadId, body.byteStream(), outStream, expectedTotalBytes) { progress, copied ->
+                            bytesCopied = copied
+                            updateActiveDownload(
+                                ActiveDownload(
+                                    id = downloadId,
+                                    title = media.title,
+                                    type = type,
+                                    progress = progress,
+                                    bytesDownloaded = copied,
+                                    totalBytes = if (expectedTotalBytes > 0) expectedTotalBytes else copied,
+                                    status = DownloadStatus.DOWNLOADING
+                                )
+                            )
+                        }
+                    }
+
+                    if (expectedTotalBytes > 0 && bytesCopied < expectedTotalBytes) {
+                        throw Exception("Unduhan tidak lengkap ($bytesCopied dari $expectedTotalBytes bytes)")
+                    }
+                    if (bytesCopied < 1024L) {
+                        throw Exception("Berkas unduhan corrupt / terlalu kecil ($bytesCopied bytes)")
+                    }
+
+                    savedUri = Uri.fromFile(file)
                 }
 
-                savedUri = Uri.fromFile(file)
-            }
+                // Check if cancelled
+                if (cancelledTasks[downloadId] == true) {
+                    cancelledTasks.remove(downloadId)
+                    removeActiveDownload(downloadId)
+                    savedUri?.let { uri ->
+                        try { context.contentResolver.delete(uri, null, null) } catch (_: Exception) {}
+                    }
+                    savedFile?.let { if (it.exists()) it.delete() }
+                    return@withContext Result.failure(Exception("Unduhan dibatalkan"))
+                }
 
-            // Check if cancelled during download
-            if (cancelledTasks[downloadId] == true) {
-                cancelledTasks.remove(downloadId)
-                removeActiveDownload(downloadId)
-                savedFile.delete()
-                return@withContext Result.failure(Exception("Unduhan dibatalkan"))
-            }
-
-            val downloadItem = DownloadItem(
-                id = downloadId,
-                title = media.title,
-                author = "${media.authorName} (@${media.authorUsername})",
-                thumbnailUri = media.coverUrl,
-                filePath = savedFile.absolutePath,
-                fileUri = savedUri?.toString() ?: "",
-                type = type,
-                fileSizeBytes = if (bytesCopied > 0) bytesCopied else totalBytes,
-                durationSeconds = media.duration,
-                timestamp = System.currentTimeMillis(),
-                sourceUrl = media.originalUrl
-            )
-
-            historyRepository.addItem(downloadItem)
-            removeActiveDownload(downloadId)
-
-            Result.success(downloadItem)
-
-        } catch (e: Exception) {
-            updateActiveDownload(
-                ActiveDownload(
+                val downloadItem = DownloadItem(
                     id = downloadId,
                     title = media.title,
+                    author = "${media.authorName} (@${media.authorUsername})",
+                    thumbnailUri = media.coverUrl,
+                    filePath = savedFile.absolutePath,
+                    fileUri = savedUri?.toString() ?: "",
                     type = type,
-                    progress = 0f,
-                    status = DownloadStatus.FAILED,
-                    errorMessage = e.localizedMessage ?: "Terjadi kesalahan saat mengunduh"
+                    fileSizeBytes = bytesCopied,
+                    durationSeconds = media.duration,
+                    timestamp = System.currentTimeMillis(),
+                    sourceUrl = media.originalUrl
                 )
-            )
-            Result.failure(e)
+
+                historyRepository.addItem(downloadItem)
+                removeActiveDownload(downloadId)
+
+                return@withContext Result.success(downloadItem)
+
+            } catch (e: Exception) {
+                lastException = e
+                // Bersihkan berkas corrupt dari penyimpanan agar tidak merusak galeri
+                savedUri?.let { uri ->
+                    try { context.contentResolver.delete(uri, null, null) } catch (_: Exception) {}
+                }
+                savedFile?.let { file ->
+                    try { if (file.exists()) file.delete() } catch (_: Exception) {}
+                }
+                // Jika masih ada candidate URL lain, loop akan mencoba URL berikutnya
+            }
         }
+
+        // Jika semua kandidat gagal
+        updateActiveDownload(
+            ActiveDownload(
+                id = downloadId,
+                title = media.title,
+                type = type,
+                progress = 0f,
+                status = DownloadStatus.FAILED,
+                errorMessage = lastException?.localizedMessage ?: "Terjadi kesalahan saat mengunduh"
+            )
+        )
+        Result.failure(lastException ?: Exception("Gagal mengunduh berkas"))
     }
 
     suspend fun downloadPhotos(
@@ -319,92 +392,106 @@ class DownloadManager(
                 val fileName = "LibreTok_${baseTitle}_${index + 1}_of_${totalCount}_${System.currentTimeMillis()}.$ext"
                 val request = Request.Builder()
                     .url(photoUrl)
-                    .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64)")
-                    .header("Referer", media.originalUrl)
+                    .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+                    .header("Accept", "image/*,*/*")
                     .build()
 
-                val response = client.newCall(request).execute()
-                if (!response.isSuccessful) {
-                    continue
-                }
-
-                val body = response.body ?: continue
-                val totalBytes = body.contentLength().coerceAtLeast(1L)
+                var savedFile: File? = null
+                var savedUri: Uri? = null
                 var bytesCopied = 0L
 
-                val savedFile: File
-                val savedUri: Uri?
+                try {
+                    val response = client.newCall(request).execute()
+                    if (!response.isSuccessful) continue
 
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                    val contentValues = ContentValues().apply {
-                        put(MediaStore.MediaColumns.DISPLAY_NAME, fileName)
-                        put(MediaStore.MediaColumns.MIME_TYPE, mimeType)
-                        put(MediaStore.MediaColumns.RELATIVE_PATH, subDir)
-                        put(MediaStore.MediaColumns.IS_PENDING, 1)
-                    }
+                    val body = response.body ?: continue
+                    val expectedBytes = body.contentLength()
 
-                    val uri = context.contentResolver.insert(collectionUri, contentValues)
-                        ?: continue
-                    savedUri = uri
-
-                    context.contentResolver.openOutputStream(uri).use { outStream ->
-                        if (outStream != null) {
-                            val buffer = ByteArray(8192)
-                            var read: Int
-                            val inStream = body.byteStream()
-                            while (inStream.read(buffer).also { read = it } != -1) {
-                                if (cancelledTasks[downloadId] == true) {
-                                    break
-                                }
-                                outStream.write(buffer, 0, read)
-                                bytesCopied += read
-                            }
-                            outStream.flush()
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                        val contentValues = ContentValues().apply {
+                            put(MediaStore.MediaColumns.DISPLAY_NAME, fileName)
+                            put(MediaStore.MediaColumns.MIME_TYPE, mimeType)
+                            put(MediaStore.MediaColumns.RELATIVE_PATH, subDir)
+                            put(MediaStore.MediaColumns.IS_PENDING, 1)
                         }
+
+                        val uri = context.contentResolver.insert(collectionUri, contentValues)
+                            ?: continue
+                        savedUri = uri
+
+                        context.contentResolver.openOutputStream(uri).use { outStream ->
+                            if (outStream != null) {
+                                copyStream(downloadId, body.byteStream(), outStream, expectedBytes) { _, copied ->
+                                    bytesCopied = copied
+                                }
+                            }
+                        }
+
+                        if (expectedBytes > 0 && bytesCopied < expectedBytes) {
+                            throw Exception("Foto tidak terunduh lengkap")
+                        }
+
+                        contentValues.clear()
+                        contentValues.put(MediaStore.MediaColumns.IS_PENDING, 0)
+                        context.contentResolver.update(uri, contentValues, null, null)
+
+                        savedFile = File(
+                            Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_PICTURES),
+                            "LibreTok/$fileName"
+                        )
+                    } else {
+                        val publicDir = File(
+                            Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_PICTURES),
+                            "LibreTok"
+                        )
+                        if (!publicDir.exists()) publicDir.mkdirs()
+                        val file = File(publicDir, fileName)
+                        savedFile = file
+
+                        FileOutputStream(file).use { outStream ->
+                            copyStream(downloadId, body.byteStream(), outStream, expectedBytes) { _, copied ->
+                                bytesCopied = copied
+                            }
+                        }
+
+                        if (expectedBytes > 0 && bytesCopied < expectedBytes) {
+                            throw Exception("Foto tidak terunduh lengkap")
+                        }
+
+                        val values = ContentValues().apply {
+                            put(MediaStore.Images.Media.DATA, savedFile.absolutePath)
+                            put(MediaStore.Images.Media.MIME_TYPE, mimeType)
+                        }
+                        context.contentResolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values)
+                        savedUri = Uri.fromFile(savedFile)
                     }
 
-                    contentValues.clear()
-                    contentValues.put(MediaStore.MediaColumns.IS_PENDING, 0)
-                    context.contentResolver.update(uri, contentValues, null, null)
+                    val downloadItem = DownloadItem(
+                        id = "${downloadId}_$index",
+                        title = if (totalCount > 1) "${media.title} (${index + 1}/$totalCount)" else media.title,
+                        author = "${media.authorName} (@${media.authorUsername})",
+                        thumbnailUri = photoUrl,
+                        filePath = savedFile.absolutePath,
+                        fileUri = savedUri.toString(),
+                        type = DownloadType.PHOTO,
+                        fileSizeBytes = bytesCopied,
+                        durationSeconds = 0,
+                        timestamp = System.currentTimeMillis(),
+                        sourceUrl = media.originalUrl
+                    )
 
-                    savedFile = File(
-                        Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_PICTURES),
-                        "LibreTok/$fileName"
-                    )
-                } else {
-                    val publicDir = File(
-                        Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_PICTURES),
-                        "LibreTok"
-                    )
-                    if (!publicDir.exists()) publicDir.mkdirs()
-                    savedFile = File(publicDir, fileName)
-                    savedFile.outputStream().use { outStream ->
-                        body.byteStream().copyTo(outStream)
+                    historyRepository.addItem(downloadItem)
+                    downloadedItems.add(downloadItem)
+
+                } catch (e: Exception) {
+                    // Bersihkan jika foto corrupt
+                    savedUri?.let { uri ->
+                        try { context.contentResolver.delete(uri, null, null) } catch (_: Exception) {}
                     }
-                    val values = ContentValues().apply {
-                        put(MediaStore.Images.Media.DATA, savedFile.absolutePath)
-                        put(MediaStore.Images.Media.MIME_TYPE, mimeType)
+                    savedFile?.let { file ->
+                        try { if (file.exists()) file.delete() } catch (_: Exception) {}
                     }
-                    context.contentResolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values)
-                    savedUri = Uri.fromFile(savedFile)
                 }
-
-                val downloadItem = DownloadItem(
-                    id = "${downloadId}_$index",
-                    title = if (totalCount > 1) "${media.title} (${index + 1}/$totalCount)" else media.title,
-                    author = "${media.authorName} (@${media.authorUsername})",
-                    thumbnailUri = photoUrl,
-                    filePath = savedFile.absolutePath,
-                    fileUri = savedUri?.toString() ?: "",
-                    type = DownloadType.PHOTO,
-                    fileSizeBytes = if (bytesCopied > 0) bytesCopied else totalBytes,
-                    durationSeconds = 0,
-                    timestamp = System.currentTimeMillis(),
-                    sourceUrl = media.originalUrl
-                )
-
-                historyRepository.addItem(downloadItem)
-                downloadedItems.add(downloadItem)
 
                 val progress = (index + 1).toFloat() / totalCount
                 updateActiveDownload(
@@ -440,7 +527,7 @@ class DownloadManager(
         totalBytes: Long,
         onProgress: (progress: Float, copied: Long) -> Unit
     ) {
-        val buffer = ByteArray(8192)
+        val buffer = ByteArray(32 * 1024)
         var bytesCopied = 0L
         var read: Int
         var lastUpdate = System.currentTimeMillis()
@@ -449,13 +536,13 @@ class DownloadManager(
             output.use { outStream ->
                 while (inStream.read(buffer).also { read = it } != -1) {
                     if (cancelledTasks[downloadId] == true) {
-                        return
+                        throw Exception("Unduhan dibatalkan")
                     }
                     outStream.write(buffer, 0, read)
                     bytesCopied += read
 
                     val now = System.currentTimeMillis()
-                    if (now - lastUpdate > 250 || bytesCopied == totalBytes) {
+                    if (now - lastUpdate > 250 || (totalBytes > 0 && bytesCopied == totalBytes)) {
                         lastUpdate = now
                         val progress = if (totalBytes > 0) (bytesCopied.toFloat() / totalBytes).coerceIn(0f, 1f) else 0f
                         onProgress(progress, bytesCopied)
@@ -483,9 +570,6 @@ class DownloadManager(
         _activeDownloads.value = current
     }
 
-    /**
-     * Share file with other applications (WhatsApp, Telegram, etc.)
-     */
     fun shareFile(item: DownloadItem) {
         try {
             val file = File(item.filePath)
@@ -518,9 +602,6 @@ class DownloadManager(
         }
     }
 
-    /**
-     * Open media file in default system player or viewer
-     */
     fun openFile(item: DownloadItem) {
         try {
             val file = File(item.filePath)

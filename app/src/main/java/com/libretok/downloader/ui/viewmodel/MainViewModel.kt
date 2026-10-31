@@ -11,9 +11,11 @@ import com.libretok.downloader.data.storage.DownloadManager
 import com.libretok.downloader.data.storage.HistoryRepository
 import com.libretok.downloader.data.storage.SettingsManager
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 
 enum class HistoryFilter {
@@ -267,12 +269,19 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         batchJob?.cancel()
         batchJob = viewModelScope.launch {
             for (i in items.indices) {
+                if (!isActive) break
                 val currentItem = _batchQueue.value[i]
 
                 // Step 1: Fetching
                 updateBatchItem(i) { it.copy(status = BatchItemStatus.FETCHING) }
 
-                val fetchResult = apiService.fetchMedia(currentItem.url, quality)
+                var fetchResult = apiService.fetchMedia(currentItem.url, quality)
+                if (fetchResult.isFailure && isActive) {
+                    // Retry fetch sekali jika terjadi kegagalan jaringan sementara
+                    delay(500)
+                    fetchResult = apiService.fetchMedia(currentItem.url, quality)
+                }
+
                 if (fetchResult.isFailure) {
                     updateBatchItem(i) {
                         it.copy(
@@ -292,10 +301,20 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 }
 
                 // Step 2: Downloading
-                val downloadResult = if (media.isImagesPost && media.images.isNotEmpty()) {
+                var downloadResult = if (media.isImagesPost && media.images.isNotEmpty()) {
                     downloadManager.downloadPhotos(media, media.images).map { it.first() }
                 } else {
                     downloadManager.downloadMedia(media, DownloadType.VIDEO)
+                }
+
+                // Retry unduhan sekali jika terjadi kegagalan koneksi CDN
+                if (downloadResult.isFailure && isActive) {
+                    delay(800)
+                    downloadResult = if (media.isImagesPost && media.images.isNotEmpty()) {
+                        downloadManager.downloadPhotos(media, media.images).map { it.first() }
+                    } else {
+                        downloadManager.downloadMedia(media, DownloadType.VIDEO)
+                    }
                 }
 
                 if (downloadResult.isSuccess) {
@@ -314,6 +333,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         )
                     }
                 }
+
+                // Jeda antar unduhan agar CDN tidak memblokir/rate-limit request massal
+                delay(350)
             }
             _isBatchRunning.value = false
         }
