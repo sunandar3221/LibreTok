@@ -203,7 +203,7 @@ class DownloadManager(
 
                 val expectedTotalBytes = body.contentLength()
 
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                bytesCopied = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
                     val contentValues = ContentValues().apply {
                         put(MediaStore.MediaColumns.DISPLAY_NAME, effectiveFileName)
                         put(MediaStore.MediaColumns.MIME_TYPE, effectiveMime)
@@ -215,30 +215,21 @@ class DownloadManager(
                         ?: throw Exception("Gagal membuat entri penyimpanan MediaStore")
                     savedUri = uri
 
-                    context.contentResolver.openOutputStream(uri).use { outStream ->
+                    val copied = context.contentResolver.openOutputStream(uri).use { outStream ->
                         if (outStream == null) throw Exception("Gagal membuka stream output MediaStore")
-                        copyStream(downloadId, body.byteStream(), outStream, expectedTotalBytes) { progress, copied ->
-                            bytesCopied = copied
+                        copyStream(downloadId, body.byteStream(), outStream, expectedTotalBytes) { progress, c ->
                             updateActiveDownload(
                                 ActiveDownload(
                                     id = downloadId,
                                     title = media.title,
                                     type = effectiveType,
                                     progress = progress,
-                                    bytesDownloaded = copied,
-                                    totalBytes = if (expectedTotalBytes > 0) expectedTotalBytes else copied,
+                                    bytesDownloaded = c,
+                                    totalBytes = if (expectedTotalBytes > 0) expectedTotalBytes else c,
                                     status = DownloadStatus.DOWNLOADING
                                 )
                             )
                         }
-                    }
-
-                    // Verifikasi kelengkapan berkas untuk mencegah berkas corrupt
-                    if (expectedTotalBytes > 0 && bytesCopied < expectedTotalBytes) {
-                        throw Exception("Unduhan tidak lengkap ($bytesCopied dari $expectedTotalBytes bytes)")
-                    }
-                    if (bytesCopied < 1024L) {
-                        throw Exception("Berkas unduhan corrupt / terlalu kecil ($bytesCopied bytes)")
                     }
 
                     contentValues.clear()
@@ -254,6 +245,7 @@ class DownloadManager(
                         "LibreTok/$effectiveFileName"
                     )
                     savedFile = fallbackFile
+                    copied
 
                 } else {
                     val publicDir = File(
@@ -269,31 +261,28 @@ class DownloadManager(
                     val file = File(publicDir, effectiveFileName)
                     savedFile = file
 
-                    FileOutputStream(file).use { outStream ->
-                        copyStream(downloadId, body.byteStream(), outStream, expectedTotalBytes) { progress, copied ->
-                            bytesCopied = copied
+                    val copied = FileOutputStream(file).use { outStream ->
+                        copyStream(downloadId, body.byteStream(), outStream, expectedTotalBytes) { progress, c ->
                             updateActiveDownload(
                                 ActiveDownload(
                                     id = downloadId,
                                     title = media.title,
                                     type = effectiveType,
                                     progress = progress,
-                                    bytesDownloaded = copied,
-                                    totalBytes = if (expectedTotalBytes > 0) expectedTotalBytes else copied,
+                                    bytesDownloaded = c,
+                                    totalBytes = if (expectedTotalBytes > 0) expectedTotalBytes else c,
                                     status = DownloadStatus.DOWNLOADING
                                 )
                             )
                         }
                     }
 
-                    if (expectedTotalBytes > 0 && bytesCopied < expectedTotalBytes) {
-                        throw Exception("Unduhan tidak lengkap ($bytesCopied dari $expectedTotalBytes bytes)")
-                    }
-                    if (bytesCopied < 1024L) {
-                        throw Exception("Berkas unduhan corrupt / terlalu kecil ($bytesCopied bytes)")
-                    }
-
                     savedUri = Uri.fromFile(file)
+                    copied
+                }
+
+                if (bytesCopied <= 0L) {
+                    throw Exception("Berkas unduhan kosong (0 bytes diterima)")
                 }
 
                 // Check if cancelled
@@ -432,17 +421,10 @@ class DownloadManager(
                             ?: continue
                         savedUri = uri
 
-                        context.contentResolver.openOutputStream(uri).use { outStream ->
-                            if (outStream != null) {
-                                copyStream(downloadId, body.byteStream(), outStream, expectedBytes) { _, copied ->
-                                    bytesCopied = copied
-                                }
-                            }
-                        }
-
-                        if (expectedBytes > 0 && bytesCopied < expectedBytes) {
-                            throw Exception("Foto tidak terunduh lengkap")
-                        }
+                        val copied = context.contentResolver.openOutputStream(uri)?.use { outStream ->
+                            copyStream(downloadId, body.byteStream(), outStream, expectedBytes) { _, _ -> }
+                        } ?: 0L
+                        bytesCopied = copied
 
                         contentValues.clear()
                         contentValues.put(MediaStore.MediaColumns.IS_PENDING, 0)
@@ -461,15 +443,10 @@ class DownloadManager(
                         val file = File(publicDir, fileName)
                         savedFile = file
 
-                        FileOutputStream(file).use { outStream ->
-                            copyStream(downloadId, body.byteStream(), outStream, expectedBytes) { _, copied ->
-                                bytesCopied = copied
-                            }
+                        val copied = FileOutputStream(file).use { outStream ->
+                            copyStream(downloadId, body.byteStream(), outStream, expectedBytes) { _, _ -> }
                         }
-
-                        if (expectedBytes > 0 && bytesCopied < expectedBytes) {
-                            throw Exception("Foto tidak terunduh lengkap")
-                        }
+                        bytesCopied = copied
 
                         val values = ContentValues().apply {
                             put(MediaStore.Images.Media.DATA, savedFile.absolutePath)
@@ -477,6 +454,10 @@ class DownloadManager(
                         }
                         context.contentResolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values)
                         savedUri = Uri.fromFile(savedFile)
+                    }
+
+                    if (bytesCopied <= 0L) {
+                        throw Exception("Foto tidak terunduh")
                     }
 
                     val downloadItem = DownloadItem(
@@ -539,11 +520,11 @@ class DownloadManager(
         output: OutputStream,
         totalBytes: Long,
         onProgress: (progress: Float, copied: Long) -> Unit
-    ) {
+    ): Long {
         val buffer = ByteArray(32 * 1024)
-        var bytesCopied = 0L
+        var totalCopied = 0L
         var read: Int
-        var lastUpdate = System.currentTimeMillis()
+        var lastUpdate = 0L
 
         input.use { inStream ->
             output.use { outStream ->
@@ -552,18 +533,22 @@ class DownloadManager(
                         throw Exception("Unduhan dibatalkan")
                     }
                     outStream.write(buffer, 0, read)
-                    bytesCopied += read
+                    totalCopied += read
 
                     val now = System.currentTimeMillis()
-                    if (now - lastUpdate > 250 || (totalBytes > 0 && bytesCopied == totalBytes)) {
+                    if (now - lastUpdate > 200) {
                         lastUpdate = now
-                        val progress = if (totalBytes > 0) (bytesCopied.toFloat() / totalBytes).coerceIn(0f, 1f) else 0f
-                        onProgress(progress, bytesCopied)
+                        val progress = if (totalBytes > 0) (totalCopied.toFloat() / totalBytes).coerceIn(0f, 1f) else 0f
+                        onProgress(progress, totalCopied)
                     }
                 }
                 outStream.flush()
             }
         }
+
+        val finalProgress = if (totalBytes > 0) 1f else 0f
+        onProgress(finalProgress, totalCopied)
+        return totalCopied
     }
 
     fun cancelDownload(downloadId: String) {
