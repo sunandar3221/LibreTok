@@ -165,6 +165,7 @@ class TikTokApiService(
             val rawImages = data.images?.mapNotNull { fixUrl(it) } ?: emptyList()
             val playUrl = fixUrl(data.play) ?: ""
             val hdPlayUrl = fixUrl(data.hdplay)
+            val wmPlayUrl = fixUrl(data.wmplay)
             val musicUrl = fixUrl(data.music) ?: fixUrl(data.musicInfo?.play)
             val coverUrl = fixUrl(data.originCover) ?: fixUrl(data.cover) ?: ""
             val avatarUrl = fixUrl(data.author?.avatar) ?: ""
@@ -185,6 +186,7 @@ class TikTokApiService(
                 coverUrl = coverUrl,
                 videoUrl = playUrl,
                 hdVideoUrl = hdPlayUrl,
+                wmVideoUrl = wmPlayUrl,
                 musicUrl = musicUrl,
                 musicTitle = data.musicInfo?.title ?: "Original Sound",
                 duration = data.duration ?: 0,
@@ -255,6 +257,22 @@ class TikTokApiService(
     }
 
     private fun requestCobalt(endpoint: String, targetUrl: String, isAudio: Boolean, quality: String = "1080"): CobaltResponse? {
+        val cobaltQuality = if (quality == "1080" || quality.isBlank() || quality == "max") "max" else quality
+        val resp = executeCobaltRequest(endpoint, targetUrl, isAudio, cobaltQuality)
+        if (resp != null && (resp.status == "tunnel" || resp.status == "redirect" || resp.status == "picker")) {
+            return resp
+        }
+        // Fallback otomatis ke "max" jika resolusi spesifik tidak tersedia di platform
+        if (!isAudio && cobaltQuality != "max") {
+            val fallbackResp = executeCobaltRequest(endpoint, targetUrl, isAudio, "max")
+            if (fallbackResp != null && (fallbackResp.status == "tunnel" || fallbackResp.status == "redirect" || fallbackResp.status == "picker")) {
+                return fallbackResp
+            }
+        }
+        return resp
+    }
+
+    private fun executeCobaltRequest(endpoint: String, targetUrl: String, isAudio: Boolean, quality: String): CobaltResponse? {
         return try {
             val payload = if (isAudio) {
                 mapOf("url" to targetUrl, "downloadMode" to "audio")
@@ -266,7 +284,7 @@ class TikTokApiService(
                 .url(endpoint)
                 .header("Accept", "application/json")
                 .header("Content-Type", "application/json")
-                .header("User-Agent", "LibreTok/1.0.2")
+                .header("User-Agent", "LibreTok/1.0.3")
                 .post(jsonString.toRequestBody(JSON_MEDIA_TYPE))
                 .build()
 

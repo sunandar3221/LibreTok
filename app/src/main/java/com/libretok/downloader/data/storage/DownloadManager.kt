@@ -76,12 +76,14 @@ class DownloadManager(
                 }
                 if (media.videoUrl.isNotBlank()) list.add(media.videoUrl)
                 if (!media.hdVideoUrl.isNullOrBlank()) list.add(media.hdVideoUrl)
+                if (!media.wmVideoUrl.isNullOrBlank()) list.add(media.wmVideoUrl)
                 list.distinct()
             }
             DownloadType.HD_VIDEO -> {
                 val list = mutableListOf<String>()
                 if (!media.hdVideoUrl.isNullOrBlank()) list.add(media.hdVideoUrl)
                 if (media.videoUrl.isNotBlank()) list.add(media.videoUrl)
+                if (!media.wmVideoUrl.isNullOrBlank()) list.add(media.wmVideoUrl)
                 list.distinct()
             }
             DownloadType.AUDIO -> listOfNotNull(media.musicUrl?.ifBlank { null })
@@ -162,14 +164,11 @@ class DownloadManager(
                     .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
                     .header("Accept", "*/*")
 
-                // Only set Referer when not hitting foreign CDNs that reject hotlinking
-                val isForeignCdn = targetUrl.contains("googlevideo.com") ||
-                        targetUrl.contains("cdninstagram.com") ||
-                        targetUrl.contains("fbcdn.net") ||
-                        targetUrl.contains("akamaized.net")
-
-                if (!isForeignCdn && media.platform == "TikTok") {
-                    requestBuilder.header("Referer", "https://www.tiktok.com/")
+                // Hanya set Referer sesuai domain asal untuk menghindari penolakan CDN (HTTP 403 / 503)
+                val host = try { Uri.parse(targetUrl).host?.lowercase() ?: "" } catch (_: Exception) { "" }
+                when {
+                    host.contains("tikwm.com") -> requestBuilder.header("Referer", "https://www.tikwm.com/")
+                    host.contains("tiktok.com") -> requestBuilder.header("Referer", "https://www.tiktok.com/")
                 }
 
                 val response = client.newCall(requestBuilder.build()).execute()
@@ -282,7 +281,7 @@ class DownloadManager(
                 }
 
                 if (bytesCopied <= 0L) {
-                    throw Exception("Berkas unduhan kosong (0 bytes diterima)")
+                    throw Exception("Kualitas video yang dipilih tidak tersedia di server atau berkas kosong (0 bytes diterima).")
                 }
 
                 // Check if cancelled
@@ -527,23 +526,21 @@ class DownloadManager(
         var lastUpdate = 0L
 
         input.use { inStream ->
-            output.use { outStream ->
-                while (inStream.read(buffer).also { read = it } != -1) {
-                    if (cancelledTasks[downloadId] == true) {
-                        throw Exception("Unduhan dibatalkan")
-                    }
-                    outStream.write(buffer, 0, read)
-                    totalCopied += read
-
-                    val now = System.currentTimeMillis()
-                    if (now - lastUpdate > 200) {
-                        lastUpdate = now
-                        val progress = if (totalBytes > 0) (totalCopied.toFloat() / totalBytes).coerceIn(0f, 1f) else 0f
-                        onProgress(progress, totalCopied)
-                    }
+            while (inStream.read(buffer).also { read = it } != -1) {
+                if (cancelledTasks[downloadId] == true) {
+                    throw Exception("Unduhan dibatalkan")
                 }
-                outStream.flush()
+                output.write(buffer, 0, read)
+                totalCopied += read
+
+                val now = System.currentTimeMillis()
+                if (now - lastUpdate > 200) {
+                    lastUpdate = now
+                    val progress = if (totalBytes > 0) (totalCopied.toFloat() / totalBytes).coerceIn(0f, 1f) else 0f
+                    onProgress(progress, totalCopied)
+                }
             }
+            output.flush()
         }
 
         val finalProgress = if (totalBytes > 0) 1f else 0f
