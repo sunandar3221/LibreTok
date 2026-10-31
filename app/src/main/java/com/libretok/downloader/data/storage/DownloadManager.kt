@@ -181,24 +181,37 @@ class DownloadManager(
 
                 // Validasi tipe konten agar tidak menyimpan HTML/Text sebagai video yang menyebabkan file corrupt
                 val contentType = body.contentType()
-                if (contentType != null) {
-                    val mime = "${contentType.type}/${contentType.subtype}".lowercase()
-                    if (mime.contains("text") || mime.contains("html") || mime.contains("json")) {
-                        throw Exception("Tautan menghasilkan respon HTML/Teks, bukan media valid")
-                    }
+                val mime = contentType?.let { "${it.type}/${it.subtype}".lowercase() } ?: ""
+                if (mime.contains("text") || mime.contains("html") || mime.contains("json")) {
+                    throw Exception("Tautan menghasilkan respon HTML/Teks, bukan media valid")
                 }
+
+                // Deteksi otomatis jika tautan video ternyata mengembalikan berkas foto
+                val isActuallyImage = (type == DownloadType.VIDEO || type == DownloadType.HD_VIDEO) && mime.startsWith("image/")
+                val effectiveExt = if (isActuallyImage) "jpg" else extension
+                val effectiveMime = if (isActuallyImage) "image/jpeg" else mimeType
+                val effectiveSubDir = if (isActuallyImage) (Environment.DIRECTORY_PICTURES + "/LibreTok") else subDir
+                val effectiveCollectionUri = if (isActuallyImage) {
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                        MediaStore.Images.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY)
+                    } else {
+                        MediaStore.Images.Media.EXTERNAL_CONTENT_URI
+                    }
+                } else collectionUri
+                val effectiveFileName = if (isActuallyImage) fileName.replace(".mp4", ".jpg") else fileName
+                val effectiveType = if (isActuallyImage) DownloadType.PHOTO else type
 
                 val expectedTotalBytes = body.contentLength()
 
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
                     val contentValues = ContentValues().apply {
-                        put(MediaStore.MediaColumns.DISPLAY_NAME, fileName)
-                        put(MediaStore.MediaColumns.MIME_TYPE, mimeType)
-                        put(MediaStore.MediaColumns.RELATIVE_PATH, subDir)
+                        put(MediaStore.MediaColumns.DISPLAY_NAME, effectiveFileName)
+                        put(MediaStore.MediaColumns.MIME_TYPE, effectiveMime)
+                        put(MediaStore.MediaColumns.RELATIVE_PATH, effectiveSubDir)
                         put(MediaStore.MediaColumns.IS_PENDING, 1)
                     }
 
-                    val uri = context.contentResolver.insert(collectionUri, contentValues)
+                    val uri = context.contentResolver.insert(effectiveCollectionUri, contentValues)
                         ?: throw Exception("Gagal membuat entri penyimpanan MediaStore")
                     savedUri = uri
 
@@ -210,7 +223,7 @@ class DownloadManager(
                                 ActiveDownload(
                                     id = downloadId,
                                     title = media.title,
-                                    type = type,
+                                    type = effectiveType,
                                     progress = progress,
                                     bytesDownloaded = copied,
                                     totalBytes = if (expectedTotalBytes > 0) expectedTotalBytes else copied,
@@ -234,26 +247,26 @@ class DownloadManager(
 
                     val fallbackFile = File(
                         Environment.getExternalStoragePublicDirectory(
-                            if (type == DownloadType.AUDIO) Environment.DIRECTORY_MUSIC
-                            else if (type == DownloadType.PHOTO) Environment.DIRECTORY_PICTURES
+                            if (effectiveType == DownloadType.AUDIO) Environment.DIRECTORY_MUSIC
+                            else if (effectiveType == DownloadType.PHOTO) Environment.DIRECTORY_PICTURES
                             else Environment.DIRECTORY_MOVIES
                         ),
-                        "LibreTok/$fileName"
+                        "LibreTok/$effectiveFileName"
                     )
                     savedFile = fallbackFile
 
                 } else {
                     val publicDir = File(
                         Environment.getExternalStoragePublicDirectory(
-                            if (type == DownloadType.AUDIO) Environment.DIRECTORY_MUSIC
-                            else if (type == DownloadType.PHOTO) Environment.DIRECTORY_PICTURES
+                            if (effectiveType == DownloadType.AUDIO) Environment.DIRECTORY_MUSIC
+                            else if (effectiveType == DownloadType.PHOTO) Environment.DIRECTORY_PICTURES
                             else Environment.DIRECTORY_MOVIES
                         ),
                         "LibreTok"
                     )
                     if (!publicDir.exists()) publicDir.mkdirs()
 
-                    val file = File(publicDir, fileName)
+                    val file = File(publicDir, effectiveFileName)
                     savedFile = file
 
                     FileOutputStream(file).use { outStream ->
@@ -263,7 +276,7 @@ class DownloadManager(
                                 ActiveDownload(
                                     id = downloadId,
                                     title = media.title,
-                                    type = type,
+                                    type = effectiveType,
                                     progress = progress,
                                     bytesDownloaded = copied,
                                     totalBytes = if (expectedTotalBytes > 0) expectedTotalBytes else copied,
@@ -301,7 +314,7 @@ class DownloadManager(
                     thumbnailUri = media.coverUrl,
                     filePath = savedFile.absolutePath,
                     fileUri = savedUri?.toString() ?: "",
-                    type = type,
+                    type = effectiveType,
                     fileSizeBytes = bytesCopied,
                     durationSeconds = media.duration,
                     timestamp = System.currentTimeMillis(),

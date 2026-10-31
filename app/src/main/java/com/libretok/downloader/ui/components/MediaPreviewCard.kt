@@ -733,6 +733,33 @@ fun MediaPreviewCard(
                         }
                     }
                 }
+
+                // Fallback Button: Jika videoUrl kosong dan list images kosong, sediakan opsi unduh foto cover/preview
+                if (media.videoUrl.isBlank() && media.images.isEmpty() && media.coverUrl.isNotBlank()) {
+                    Button(
+                        onClick = {
+                            triggerDownloadPhotos(listOf(media.coverUrl))
+                        },
+                        enabled = !isAnyDownloading,
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(12.dp),
+                        colors = ButtonDefaults.buttonColors(containerColor = TikTokPink)
+                    ) {
+                        if (isDownloadingPhotos) {
+                            CircularProgressIndicator(
+                                modifier = Modifier.size(18.dp),
+                                color = Color.White,
+                                strokeWidth = 2.dp
+                            )
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text("Sedang Mengunduh Foto...", fontWeight = FontWeight.Bold)
+                        } else {
+                            Icon(imageVector = Icons.Default.PhotoLibrary, contentDescription = null)
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text("Download Foto Postingan", fontWeight = FontWeight.Bold)
+                        }
+                    }
+                }
             }
         }
     }

@@ -162,13 +162,18 @@ class TikTokApiService(
                 return if (u.startsWith("http")) u else "$baseUrl$u"
             }
 
-            val isImages = !data.images.isNullOrEmpty()
+            val rawImages = data.images?.mapNotNull { fixUrl(it) } ?: emptyList()
             val playUrl = fixUrl(data.play) ?: ""
             val hdPlayUrl = fixUrl(data.hdplay)
             val musicUrl = fixUrl(data.music) ?: fixUrl(data.musicInfo?.play)
             val coverUrl = fixUrl(data.originCover) ?: fixUrl(data.cover) ?: ""
             val avatarUrl = fixUrl(data.author?.avatar) ?: ""
-            val imagesList = data.images?.mapNotNull { fixUrl(it) } ?: emptyList()
+            val imagesList = when {
+                rawImages.isNotEmpty() -> rawImages
+                playUrl.isBlank() && coverUrl.isNotBlank() -> listOf(coverUrl)
+                else -> emptyList()
+            }
+            val isImages = imagesList.isNotEmpty()
             val postTitle = data.title?.ifBlank { "TikTok Media" } ?: "TikTok Media"
 
             val media = TikTokMedia(
@@ -332,7 +337,7 @@ class TikTokApiService(
         val pickerItems = videoResp.picker ?: emptyList()
         val pickerPhotos = if (isPicker) {
             pickerItems.filter { it.type == "photo" || it.type == "image" || it.type == null || it.type != "video" }
-                .mapNotNull { it.url }
+                .mapNotNull { it.url ?: it.thumb }
         } else {
             emptyList()
         }
@@ -340,15 +345,15 @@ class TikTokApiService(
         val isSinglePhoto = !isPicker && !videoResp.url.isNullOrBlank() && (
             videoResp.url.contains(Regex("\\.(jpg|jpeg|png|webp)", RegexOption.IGNORE_CASE)) ||
             videoResp.filename?.contains(Regex("\\.(jpg|jpeg|png|webp)", RegexOption.IGNORE_CASE)) == true ||
-            (platform == "Instagram" && cleanUrl.contains("/p/") && !videoResp.url.contains(".mp4"))
+            (platform == "Instagram" && cleanUrl.contains("/p/") && !videoResp.url.contains(".mp4")) ||
+            videoResp.filename?.contains("photo", ignoreCase = true) == true
         )
 
-        val imagesList = when {
+        var imagesList = when {
             pickerPhotos.isNotEmpty() -> pickerPhotos
             isSinglePhoto -> listOf(videoResp.url!!)
             else -> emptyList()
         }
-        val isImages = imagesList.isNotEmpty()
 
         // Determine cover image
         val coverUrl = when {
@@ -365,9 +370,19 @@ class TikTokApiService(
 
         val mainVideoUrl = when {
             isPicker -> pickerItems.firstOrNull { it.type == "video" }?.url ?: (videoResp.url ?: "")
-            isImages && videoResp.url?.contains(".mp4") == false -> ""
+            imagesList.isNotEmpty() && videoResp.url?.contains(".mp4") == false -> ""
             else -> videoResp.url ?: ""
         }
+
+        // Fallback: Jika tidak ada video dan imagesList kosong, gunakan cover atau url sebagai gambar
+        if (mainVideoUrl.isBlank() && imagesList.isEmpty()) {
+            if (!videoResp.url.isNullOrBlank()) {
+                imagesList = listOf(videoResp.url)
+            } else if (coverUrl.isNotBlank()) {
+                imagesList = listOf(coverUrl)
+            }
+        }
+        val isImages = imagesList.isNotEmpty()
 
         val musicUrl = audioResp?.url
 

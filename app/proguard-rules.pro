@@ -45,6 +45,13 @@
 -keepclassmembers class * extends androidx.compose.ui.Modifier { *; }
 -dontwarn androidx.compose.**
 
+# Keep all enums safe from R8 minification
+-keepclassmembers enum * { *; }
+
+# Keep LibreTokApp and MainActivity
+-keep class com.libretok.downloader.LibreTokApp { *; }
+-keep class com.libretok.downloader.MainActivity { *; }
+
 # Kotlin Coroutines
 -keepnames class kotlinx.coroutines.internal.MainDispatcherFactory {}
 -keepnames class kotlinx.coroutines.CoroutineExceptionHandler {}

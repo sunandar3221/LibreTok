@@ -23,6 +23,7 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -38,9 +39,13 @@ import com.libretok.downloader.ui.viewmodel.PlayerTarget
 @Composable
 fun HomeScreen(
     viewModel: MainViewModel,
+    onNavigateToDownloads: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
+    val isOnline by viewModel.isOnline.collectAsState()
+    val downloadsHistory by viewModel.downloadsHistory.collectAsState()
+
     val urlInput by viewModel.urlInput.collectAsState()
     val isLoading by viewModel.isLoading.collectAsState()
     val errorMessage by viewModel.errorMessage.collectAsState()
@@ -122,8 +127,18 @@ fun HomeScreen(
             }
         }
 
-        // Auto Clipboard Detection Banner
-        item(key = "clipboard_banner") {
+        if (!isOnline) {
+            // Tampilan Khusus Offline saat tidak ada koneksi internet di Tab Beranda
+            item(key = "offline_special_view") {
+                OfflineStateCard(
+                    offlineMediaCount = downloadsHistory.size,
+                    onRetry = { viewModel.refreshNetworkStatus() },
+                    onGoToDownloads = onNavigateToDownloads
+                )
+            }
+        } else {
+            // Auto Clipboard Detection Banner
+            item(key = "clipboard_banner") {
             AnimatedVisibility(
                 visible = clipboardDetectedUrl != null,
                 enter = fadeIn() + expandVertically(),
@@ -613,6 +628,128 @@ fun HomeScreen(
                         number = "3",
                         title = "Unduh Tanpa Watermark!",
                         desc = "Pilih unduh video tanpa watermark, full HD, atau audio MP3 gratis."
+                    )
+                }
+            }
+        }
+    }
+}
+}
+
+@Composable
+fun OfflineStateCard(
+    offlineMediaCount: Int,
+    onRetry: () -> Unit,
+    onGoToDownloads: () -> Unit
+) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(20.dp),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surface
+        ),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.2f))
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(24.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(16.dp)
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(80.dp)
+                    .clip(CircleShape)
+                    .background(TikTokPink.copy(alpha = 0.15f)),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(
+                    imageVector = Icons.Default.WifiOff,
+                    contentDescription = "Offline",
+                    tint = TikTokPink,
+                    modifier = Modifier.size(42.dp)
+                )
+            }
+
+            Text(
+                text = "Tidak Ada Koneksi Internet",
+                style = MaterialTheme.typography.titleLarge,
+                fontWeight = FontWeight.Bold,
+                textAlign = TextAlign.Center
+            )
+
+            Text(
+                text = "LibreTok memerlukan koneksi internet untuk mengunduh video dan foto baru. Anda tetap dapat memutar semua video & audio yang sudah pernah diunduh secara offline.",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                textAlign = TextAlign.Center
+            )
+
+            Button(
+                onClick = onRetry,
+                shape = RoundedCornerShape(12.dp),
+                colors = ButtonDefaults.buttonColors(containerColor = TikTokCyan),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Icon(
+                    imageVector = Icons.Default.Refresh,
+                    contentDescription = null,
+                    tint = Color.Black,
+                    modifier = Modifier.size(18.dp)
+                )
+                Spacer(modifier = Modifier.width(8.dp))
+                Text("Coba Hubungkan Lagi", color = Color.Black, fontWeight = FontWeight.Bold)
+            }
+
+            HorizontalDivider(
+                color = MaterialTheme.colorScheme.outline.copy(alpha = 0.2f),
+                modifier = Modifier.padding(vertical = 4.dp)
+            )
+
+            // Pintasan ke Tab Unduhan untuk memutar berkas offline
+            Surface(
+                shape = RoundedCornerShape(14.dp),
+                color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable { onGoToDownloads() }
+            ) {
+                Row(
+                    modifier = Modifier.padding(14.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(40.dp)
+                            .clip(CircleShape)
+                            .background(TikTokPink.copy(alpha = 0.2f)),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.FolderOpen,
+                            contentDescription = null,
+                            tint = TikTokPink,
+                            modifier = Modifier.size(22.dp)
+                        )
+                    }
+                    Spacer(modifier = Modifier.width(12.dp))
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = "Buka Riwayat Unduhan (Offline)",
+                            fontWeight = FontWeight.Bold,
+                            style = MaterialTheme.typography.titleSmall
+                        )
+                        Text(
+                            text = if (offlineMediaCount > 0) "$offlineMediaCount berkas tersimpan siap diputar tanpa kuota" else "Buka galeri unduhan Anda",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    Icon(
+                        imageVector = Icons.Default.ChevronRight,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
             }

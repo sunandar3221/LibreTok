@@ -26,7 +26,13 @@ class HistoryRepository(context: Context) {
             val json = prefs.getString("items_json", null)
             if (!json.isNullOrBlank()) {
                 val array = gson.fromJson(json, Array<DownloadItem>::class.java)
-                _items.value = array?.toList()?.sortedByDescending { it.timestamp } ?: emptyList()
+                // Filter null / corrupted items and deduplicate to prevent Compose LazyColumn duplicate key crash
+                val safeList = (array?.toList() ?: emptyList())
+                    .filterNotNull()
+                    .filter { !it.id.isNullOrBlank() }
+                    .distinctBy { it.id }
+                    .sortedByDescending { it.timestamp }
+                _items.value = safeList
             }
         } catch (e: Throwable) {
             _items.value = emptyList()
@@ -35,11 +41,12 @@ class HistoryRepository(context: Context) {
 
     private fun saveHistory(list: List<DownloadItem>) {
         try {
-            val json = gson.toJson(list.toTypedArray())
+            val safeList = list.filterNotNull().distinctBy { it.id }.sortedByDescending { it.timestamp }
+            val json = gson.toJson(safeList.toTypedArray())
             prefs.edit().putString("items_json", json).apply()
-            _items.value = list.sortedByDescending { it.timestamp }
+            _items.value = safeList
         } catch (e: Throwable) {
-            _items.value = list.sortedByDescending { it.timestamp }
+            _items.value = list.filterNotNull().distinctBy { it.id }.sortedByDescending { it.timestamp }
         }
     }
 

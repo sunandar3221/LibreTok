@@ -426,7 +426,7 @@ fun SettingsScreen(
                         SettingsInfoRow(
                             icon = Icons.Default.Info,
                             title = "Versi Aplikasi",
-                            value = "LibreTok v1.0.2 (Signed Release)"
+                            value = "LibreTok v1.0.3 (Signed Release)"
                         )
                         HorizontalDivider(modifier = Modifier.padding(vertical = 12.dp))
                         SettingsInfoRow(

@@ -124,7 +124,7 @@ fun DownloadsScreen(
                     verticalArrangement = Arrangement.spacedBy(10.dp),
                     contentPadding = PaddingValues(top = 8.dp, bottom = 24.dp)
                 ) {
-                    items(filteredItems, key = { it.id }) { item ->
+                    items(filteredItems, key = { item -> "${item.id}_${item.timestamp}" }) { item ->
                         DownloadItemCard(
                             item = item,
                             onPlayClick = {

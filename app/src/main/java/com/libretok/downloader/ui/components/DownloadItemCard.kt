@@ -91,6 +91,7 @@ fun DownloadItemCard(
                         DownloadType.VIDEO, DownloadType.HD_VIDEO -> Icons.Default.PlayArrow
                         DownloadType.AUDIO -> Icons.Default.MusicNote
                         DownloadType.PHOTO -> Icons.Default.Image
+                        else -> Icons.Default.PlayArrow
                     }
                     Icon(
                         imageVector = icon,
@@ -116,6 +117,7 @@ fun DownloadItemCard(
                         DownloadType.HD_VIDEO -> "HD VIDEO" to TikTokCyan
                         DownloadType.AUDIO -> "AUDIO (MP3)" to TikTokCyan
                         DownloadType.PHOTO -> "FOTO" to TikTokPink
+                        else -> "MEDIA" to TikTokCyan
                     }
                 }
 

@@ -241,7 +241,20 @@ fun MainScreen(
             modifier = Modifier.padding(innerPadding)
         ) {
             composable(Screen.Home.route) {
-                HomeScreen(viewModel = viewModel)
+                HomeScreen(
+                    viewModel = viewModel,
+                    onNavigateToDownloads = {
+                        if (currentRoute != Screen.Downloads.route) {
+                            navController.navigate(Screen.Downloads.route) {
+                                popUpTo(navController.graph.startDestinationId) {
+                                    saveState = true
+                                }
+                                launchSingleTop = true
+                                restoreState = true
+                            }
+                        }
+                    }
+                )
             }
             composable(Screen.Downloads.route) {
                 DownloadsScreen(viewModel = viewModel)

@@ -5,6 +5,7 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.libretok.downloader.data.model.*
 import com.libretok.downloader.data.network.AppUpdateInfo
+import com.libretok.downloader.data.network.NetworkMonitor
 import com.libretok.downloader.data.network.TikTokApiService
 import com.libretok.downloader.data.network.UpdateChecker
 import com.libretok.downloader.data.storage.DownloadManager
@@ -13,8 +14,10 @@ import com.libretok.downloader.data.storage.SettingsManager
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 
@@ -37,6 +40,19 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     val downloadManager = DownloadManager(application, historyRepository)
     val settingsManager = SettingsManager(application)
     private val updateChecker = UpdateChecker()
+    val networkMonitor = NetworkMonitor(application)
+
+    val isOnline: StateFlow<Boolean> = networkMonitor.isOnline
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), networkMonitor.isCurrentlyOnline())
+
+    fun refreshNetworkStatus() {
+        val online = networkMonitor.isCurrentlyOnline()
+        if (online) {
+            if (_errorMessage.value?.contains("koneksi", ignoreCase = true) == true) {
+                _errorMessage.value = null
+            }
+        }
+    }
 
     // UI States
     private val _urlInput = MutableStateFlow("")
@@ -166,6 +182,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             val result = downloadManager.downloadMedia(media, type, customFileName)
             result.onSuccess { item ->
                 _downloadFinishedItem.value = item
+            }.onFailure { err ->
+                _errorMessage.value = err.localizedMessage ?: "Gagal mengunduh media"
             }
         }
     }
@@ -179,6 +197,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 if (items.isNotEmpty()) {
                     _downloadFinishedItem.value = items.first()
                 }
+            }.onFailure { err ->
+                _errorMessage.value = err.localizedMessage ?: "Gagal mengunduh foto"
             }
         }
     }
@@ -226,7 +246,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 _isCheckingUpdate.value = true
                 _updateCheckMessage.value = null
             }
-            val result = updateChecker.checkUpdate("1.0.2")
+            val result = updateChecker.checkUpdate("1.0.3")
             if (isManual) {
                 _isCheckingUpdate.value = false
             }
@@ -238,7 +258,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         _updateCheckMessage.value = "Versi ${info.latestVersion} tersedia!"
                     }
                 } else if (isManual) {
-                    _updateCheckMessage.value = "Anda sudah menggunakan versi terbaru (v1.0.2)!"
+                    _updateCheckMessage.value = "Anda sudah menggunakan versi terbaru (v1.0.3)!"
                 }
             }.onFailure { err ->
                 if (isManual) {
