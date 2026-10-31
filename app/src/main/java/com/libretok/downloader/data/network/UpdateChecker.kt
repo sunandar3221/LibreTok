@@ -22,7 +22,7 @@ class UpdateChecker(
         .readTimeout(15, TimeUnit.SECONDS)
         .build()
 ) {
-    suspend fun checkUpdate(currentVersion: String = "1.0.3"): Result<AppUpdateInfo> = withContext(Dispatchers.IO) {
+    suspend fun checkUpdate(currentVersion: String = "1.0.4"): Result<AppUpdateInfo> = withContext(Dispatchers.IO) {
         try {
             val url = "https://api.github.com/repos/sunandar3221/LibreTok/releases/latest"
             val request = Request.Builder()

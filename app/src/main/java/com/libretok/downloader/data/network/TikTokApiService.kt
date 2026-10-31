@@ -39,7 +39,7 @@ class TikTokApiService(
             "https://co.otomir23.me/",
             "https://cobaltapi.cjs.nz/"
         )
-        private val URL_PATTERN = Pattern.compile("https?://[a-zA-Z0-9./?=_%&+\\-#]+")
+        private val URL_PATTERN = Pattern.compile("https?://[^\\s<>\"'\\[\\]{}|^`]+")
         private val YOUTUBE_ID_PATTERN = Pattern.compile("(?:v=|youtu\\.be/|shorts/)([a-zA-Z0-9_-]{11})")
         private val INSTAGRAM_USER_PATTERN = Pattern.compile("instagram\\.com/([a-zA-Z0-9._]+)/(?:p|reel|tv|reels)")
         private val JSON_MEDIA_TYPE = "application/json; charset=utf-8".toMediaType()
@@ -56,10 +56,10 @@ class TikTokApiService(
             val candidate = sanitizeUrl(matcher.group())
             val lower = candidate.lowercase()
             if (lower.contains("tiktok.com") || lower.contains("douyin.com") ||
-                lower.contains("instagram.com") || lower.contains("instagr.am") || lower.contains("threads.net") ||
+                lower.contains("instagram.com") || lower.contains("instagr.am") || lower.contains("threads.net") || lower.contains("ig.me") ||
                 lower.contains("youtube.com") || lower.contains("youtu.be") ||
                 lower.contains("facebook.com") || lower.contains("fb.watch") || lower.contains("fb.com") ||
-                lower.contains("twitter.com") || lower.contains("x.com")
+                lower.contains("twitter.com") || lower.contains("x.com") || lower.contains("t.co")
             ) {
                 return candidate
             }
@@ -77,16 +77,74 @@ class TikTokApiService(
     }
 
     /**
+     * Resolves redirects for short links (vt.tiktok.com, vm.tiktok.com, youtu.be, fb.watch, t.co, /share/ links)
+     */
+    suspend fun resolveRedirectUrl(url: String): String = withContext(Dispatchers.IO) {
+        val lower = url.lowercase()
+        val isShortLink = lower.contains("vt.tiktok.com") ||
+                lower.contains("vm.tiktok.com") ||
+                lower.contains("v.douyin.com") ||
+                lower.contains("youtu.be") ||
+                lower.contains("fb.watch") ||
+                lower.contains("t.co") ||
+                lower.contains("instagram.com/share/") ||
+                lower.contains("ig.me")
+
+        if (!isShortLink) {
+            return@withContext url
+        }
+
+        try {
+            val request = Request.Builder()
+                .url(url)
+                .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+                .header("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
+                .build()
+
+            val response = client.newCall(request).execute()
+            val resolved = response.request.url.toString()
+            response.close()
+
+            if (resolved.isNotBlank() && !resolved.startsWith("about:")) {
+                return@withContext sanitizeUrl(resolved)
+            }
+        } catch (_: Exception) {
+            // Jika gagal resolve, tetap gunakan url asli
+        }
+        url
+    }
+
+    private fun cleanMediaUrl(url: String): String {
+        var clean = url.trim()
+        val igMatcher = Pattern.compile("instagram\\.com/(?:p|reel|reels|tv)/([a-zA-Z0-9_-]+)").matcher(clean)
+        if (igMatcher.find()) {
+            val code = igMatcher.group(1)
+            val type = if (clean.contains("/reel")) "reel" else "p"
+            return "https://www.instagram.com/$type/$code/"
+        }
+        val ytMatcher = YOUTUBE_ID_PATTERN.matcher(clean)
+        if (ytMatcher.find()) {
+            val id = ytMatcher.group(1)
+            return "https://www.youtube.com/watch?v=$id"
+        }
+        val ttMatcher = Pattern.compile("tiktok\\.com/(@[a-zA-Z0-9._]+/(?:video|photo)/[0-9]+)").matcher(clean)
+        if (ttMatcher.find()) {
+            return "https://www.tiktok.com/${ttMatcher.group(1)}"
+        }
+        return clean
+    }
+
+    /**
      * Detects the social media platform
      */
     fun detectPlatform(url: String): String {
         val lower = url.lowercase()
         return when {
             lower.contains("tiktok.com") || lower.contains("douyin.com") -> "TikTok"
-            lower.contains("instagram.com") || lower.contains("instagr.am") || lower.contains("threads.net") -> "Instagram"
+            lower.contains("instagram.com") || lower.contains("instagr.am") || lower.contains("threads.net") || lower.contains("ig.me") -> "Instagram"
             lower.contains("youtube.com") || lower.contains("youtu.be") -> "YouTube"
             lower.contains("facebook.com") || lower.contains("fb.watch") || lower.contains("fb.com") -> "Facebook"
-            lower.contains("twitter.com") || lower.contains("x.com") -> "Twitter/X"
+            lower.contains("twitter.com") || lower.contains("x.com") || lower.contains("t.co") -> "Twitter/X"
             else -> "Video"
         }
     }
@@ -95,12 +153,21 @@ class TikTokApiService(
      * Fetches metadata & download links for TikTok, Instagram, YouTube, Facebook, etc.
      */
     suspend fun fetchMedia(url: String, quality: String = "1080p"): Result<TikTokMedia> = withContext(Dispatchers.IO) {
-        val cleanUrl = extractUrl(url) ?: sanitizeUrl(url)
+        val extracted = extractUrl(url) ?: sanitizeUrl(url)
+        val resolved = resolveRedirectUrl(extracted)
+        val cleanUrl = cleanMediaUrl(resolved)
         val platform = detectPlatform(cleanUrl)
         val cleanQuality = quality.replace("p", "").ifBlank { "1080" }
 
         if (platform == "TikTok") {
-            val tikWmResult = fetchTikWm(cleanUrl, cleanQuality)
+            var tikWmResult = fetchTikWm(cleanUrl, cleanQuality)
+            if (tikWmResult.isFailure && cleanUrl != resolved) {
+                tikWmResult = fetchTikWm(resolved, cleanQuality)
+            }
+            if (tikWmResult.isFailure && resolved != extracted) {
+                tikWmResult = fetchTikWm(extracted, cleanQuality)
+            }
+
             if (tikWmResult.isSuccess) {
                 return@withContext tikWmResult
             }
@@ -114,7 +181,10 @@ class TikTokApiService(
             )
         } else {
             // Instagram, YouTube, Facebook, etc.
-            val cobaltResult = fetchCobalt(cleanUrl, platform, cleanQuality)
+            var cobaltResult = fetchCobalt(cleanUrl, platform, cleanQuality)
+            if (cobaltResult.isFailure && cleanUrl != resolved) {
+                cobaltResult = fetchCobalt(resolved, platform, cleanQuality)
+            }
             if (cobaltResult.isSuccess) {
                 return@withContext cobaltResult
             }
@@ -284,7 +354,7 @@ class TikTokApiService(
                 .url(endpoint)
                 .header("Accept", "application/json")
                 .header("Content-Type", "application/json")
-                .header("User-Agent", "LibreTok/1.0.3")
+                .header("User-Agent", "LibreTok/1.0.4")
                 .post(jsonString.toRequestBody(JSON_MEDIA_TYPE))
                 .build()
 

@@ -246,7 +246,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 _isCheckingUpdate.value = true
                 _updateCheckMessage.value = null
             }
-            val result = updateChecker.checkUpdate("1.0.3")
+            val result = updateChecker.checkUpdate("1.0.4")
             if (isManual) {
                 _isCheckingUpdate.value = false
             }
@@ -258,7 +258,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         _updateCheckMessage.value = "Versi ${info.latestVersion} tersedia!"
                     }
                 } else if (isManual) {
-                    _updateCheckMessage.value = "Anda sudah menggunakan versi terbaru (v1.0.3)!"
+                    _updateCheckMessage.value = "Anda sudah menggunakan versi terbaru (v1.0.4)!"
                 }
             }.onFailure { err ->
                 if (isManual) {
