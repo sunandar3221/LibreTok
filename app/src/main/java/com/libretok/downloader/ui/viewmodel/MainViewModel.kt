@@ -172,9 +172,29 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             val result = apiService.fetchMedia(current.originalUrl, quality)
             _isLoading.value = false
             result.onSuccess { updated ->
-                _mediaPreview.value = updated
+                val prevTrackId = current.selectedAudioTrackId
+                val matchedTrack = if (prevTrackId != null) updated.availableAudioTracks.firstOrNull { it.id == prevTrackId } else null
+                _mediaPreview.value = if (matchedTrack != null) {
+                    updated.copy(
+                        selectedAudioTrackId = matchedTrack.id,
+                        musicUrl = matchedTrack.url,
+                        musicTitle = "${updated.title} (${matchedTrack.displayName})"
+                    )
+                } else {
+                    updated
+                }
             }
         }
+    }
+
+    fun selectAudioTrack(trackId: String) {
+        val current = _mediaPreview.value ?: return
+        val targetTrack = current.availableAudioTracks.firstOrNull { it.id == trackId } ?: return
+        _mediaPreview.value = current.copy(
+            selectedAudioTrackId = trackId,
+            musicUrl = targetTrack.url,
+            musicTitle = "${current.title} (${targetTrack.displayName})"
+        )
     }
 
     fun startDownload(type: DownloadType, customFileName: String? = null) {

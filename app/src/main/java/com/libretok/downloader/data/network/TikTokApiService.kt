@@ -40,6 +40,13 @@ data class InnertubeStreamingData(
     @SerializedName("adaptiveFormats") val adaptiveFormats: List<InnertubeFormat>?
 )
 
+data class InnertubeAudioTrack(
+    @SerializedName("displayName") val displayName: String?,
+    @SerializedName("id") val id: String?,
+    @SerializedName("audioIsDefault") val audioIsDefault: Boolean?,
+    @SerializedName("isAutoDubbed") val isAutoDubbed: Boolean?
+)
+
 data class InnertubeFormat(
     @SerializedName("itag") val itag: Int?,
     @SerializedName("url") val url: String?,
@@ -49,7 +56,8 @@ data class InnertubeFormat(
     @SerializedName("height") val height: Int?,
     @SerializedName("contentLength") val contentLength: String?,
     @SerializedName("qualityLabel") val qualityLabel: String?,
-    @SerializedName("approxDurationMs") val approxDurationMs: String?
+    @SerializedName("approxDurationMs") val approxDurationMs: String?,
+    @SerializedName("audioTrack") val audioTrack: InnertubeAudioTrack?
 )
 
 data class InnertubeVideoDetails(
@@ -446,9 +454,56 @@ class TikTokApiService(
                 it.mimeType?.startsWith("video/mp4") == true && !it.url.isNullOrBlank()
             }
 
-            // Audio track AAC / M4A dari IOS
-            val audioFormat = iosAdaptives.firstOrNull {
+            // Ekstrak semua audio tracks unik (AAC/M4A) dari IOS adaptives
+            val audioFormatMap = mutableMapOf<String, Pair<InnertubeFormat, com.libretok.downloader.data.model.MediaAudioTrack>>()
+            val allAudioFormats = iosAdaptives.filter {
                 it.mimeType?.startsWith("audio/mp4") == true && !it.url.isNullOrBlank()
+            }
+
+            for (af in allAudioFormats) {
+                val at = af.audioTrack
+                val trackId = at?.id ?: at?.displayName ?: "default"
+                val rawName = at?.displayName ?: "Suara Asli"
+                val isAutoDubbed = at?.isAutoDubbed == true
+                val isOriginal = at?.audioIsDefault == true ||
+                        rawName.contains("asli", ignoreCase = true) ||
+                        rawName.contains("original", ignoreCase = true) ||
+                        (!isAutoDubbed && (allAudioFormats.size == 1 || at == null))
+
+                val formattedName = when {
+                    isOriginal -> "$rawName (Suara Asli)"
+                    isAutoDubbed -> "$rawName (AI Dubbing)"
+                    else -> rawName
+                }
+
+                val currentEntry = audioFormatMap[trackId]
+                val currentBitrate = currentEntry?.first?.bitrate ?: 0L
+                val newBitrate = af.bitrate ?: 0L
+                if (currentEntry == null || newBitrate > currentBitrate) {
+                    audioFormatMap[trackId] = af to com.libretok.downloader.data.model.MediaAudioTrack(
+                        id = trackId,
+                        displayName = formattedName,
+                        url = af.url ?: "",
+                        isOriginal = isOriginal,
+                        isAutoDubbed = isAutoDubbed
+                    )
+                }
+            }
+
+            // Urutkan: suara asli (isOriginal) selalu di paling atas
+            val audioTracksList = audioFormatMap.values
+                .map { it.second }
+                .sortedWith(compareByDescending<com.libretok.downloader.data.model.MediaAudioTrack> { it.isOriginal }.thenBy { it.isAutoDubbed })
+
+            // Default audio track: WAJIB suara aslinya (isOriginal == true atau yang bukan AI dubbed)
+            val defaultAudioTrack = audioTracksList.firstOrNull { it.isOriginal }
+                ?: audioTracksList.firstOrNull { !it.isAutoDubbed }
+                ?: audioTracksList.firstOrNull()
+
+            val selectedAudioFormat = if (defaultAudioTrack != null) {
+                audioFormatMap[defaultAudioTrack.id]?.first ?: allAudioFormats.firstOrNull()
+            } else {
+                allAudioFormats.firstOrNull()
             }
 
             var chosenFormat: InnertubeFormat? = null
@@ -460,13 +515,13 @@ class TikTokApiService(
             } else {
                 // Cari format spesifik sesuai resolusi yang diminta (1080p, 720p, 480p)
                 val exactMatch = mp4Videos.firstOrNull { it.qualityLabel == "${targetRes}p" }
-                if (exactMatch != null && audioFormat != null) {
+                if (exactMatch != null && selectedAudioFormat != null) {
                     chosenFormat = exactMatch
                     isAdaptive = true
                 } else {
                     // Fallback ke kualitas terbaik yang tersedia
                     val bestAdaptive = mp4Videos.maxByOrNull { it.bitrate ?: 0L }
-                    if (bestAdaptive != null && audioFormat != null) {
+                    if (bestAdaptive != null && selectedAudioFormat != null) {
                         chosenFormat = bestAdaptive
                         isAdaptive = true
                     } else if (progressiveFormat != null) {
@@ -505,7 +560,7 @@ class TikTokApiService(
                 ?: ((chosenFormat?.approxDurationMs?.toLongOrNull() ?: 0L) / 1000L).toInt()
 
             val videoBytes = chosenFormat?.contentLength?.toLongOrNull() ?: 0L
-            val audioBytes = if (isAdaptive) (audioFormat?.contentLength?.toLongOrNull() ?: 0L) else 0L
+            val audioBytes = if (isAdaptive) (selectedAudioFormat?.contentLength?.toLongOrNull() ?: 0L) else 0L
             val totalBytes = videoBytes + audioBytes
 
             val qualityLabel = chosenFormat?.qualityLabel ?: "${targetRes}p"
@@ -522,8 +577,8 @@ class TikTokApiService(
                 wmVideoUrl = progressiveFormat?.url,
                 previewUrl = progressiveFormat?.url ?: videoUrl,
                 isAdaptiveStream = isAdaptive,
-                musicUrl = audioFormat?.url,
-                musicTitle = if (audioFormat != null) "$title (Audio)" else null,
+                musicUrl = defaultAudioTrack?.url ?: selectedAudioFormat?.url,
+                musicTitle = if (defaultAudioTrack != null) "$title (${defaultAudioTrack.displayName})" else if (selectedAudioFormat != null) "$title (Audio)" else null,
                 duration = duration,
                 sizeBytes = totalBytes,
                 isImagesPost = false,
@@ -532,7 +587,9 @@ class TikTokApiService(
                 platform = "YouTube",
                 description = title,
                 availableResolutions = listOf("1080p", "720p", "480p", "360p"),
-                selectedQuality = qualityLabel
+                selectedQuality = qualityLabel,
+                availableAudioTracks = audioTracksList,
+                selectedAudioTrackId = defaultAudioTrack?.id
             )
 
             Result.success(media)

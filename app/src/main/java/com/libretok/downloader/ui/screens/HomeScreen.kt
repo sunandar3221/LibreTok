@@ -581,6 +581,7 @@ fun HomeScreen(
                     askRename = askRename,
                     isAutoResolution = isAutoResolution,
                     onChangeResolution = { res -> viewModel.changeMediaResolution(res) },
+                    onChangeAudioTrack = { trackId -> viewModel.selectAudioTrack(trackId) },
                     onDownloadClick = { type, customName -> viewModel.startDownload(type, customName) },
                     onDownloadSelectedPhotos = { urls, customName -> viewModel.downloadSelectedPhotos(urls, customName) },
                     onCancelDownload = { downloadId -> viewModel.cancelDownload(downloadId) },

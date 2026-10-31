@@ -2,6 +2,14 @@ package com.libretok.downloader.data.model
 
 import com.google.gson.annotations.SerializedName
 
+data class MediaAudioTrack(
+    val id: String,
+    val displayName: String,
+    val url: String,
+    val isOriginal: Boolean = false,
+    val isAutoDubbed: Boolean = false
+)
+
 data class TikTokMedia(
     val id: String,
     val title: String,
@@ -24,8 +32,15 @@ data class TikTokMedia(
     val platform: String = "TikTok",
     val description: String = "",
     val availableResolutions: List<String> = listOf("1080p", "720p", "480p", "360p"),
-    val selectedQuality: String = "1080p"
-)
+    val selectedQuality: String = "1080p",
+    val availableAudioTracks: List<MediaAudioTrack> = emptyList(),
+    val selectedAudioTrackId: String? = null
+) {
+    val selectedAudioTrack: MediaAudioTrack?
+        get() = availableAudioTracks.firstOrNull { it.id == selectedAudioTrackId }
+            ?: availableAudioTracks.firstOrNull { it.isOriginal }
+            ?: availableAudioTracks.firstOrNull()
+}
 
 // DTO for Cobalt API
 data class CobaltResponse(

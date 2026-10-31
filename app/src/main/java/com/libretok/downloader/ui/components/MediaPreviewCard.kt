@@ -48,6 +48,7 @@ fun MediaPreviewCard(
     askRename: Boolean = false,
     isAutoResolution: Boolean = true,
     onChangeResolution: (String) -> Unit = {},
+    onChangeAudioTrack: (String) -> Unit = {},
     onDownloadClick: (DownloadType, String?) -> Unit,
     onDownloadSelectedPhotos: (List<String>, String?) -> Unit = { _, _ -> },
     onCancelDownload: (String) -> Unit,
@@ -60,6 +61,7 @@ fun MediaPreviewCard(
     // Dialog rename dan resolusi
     var showRenameDialog by remember { mutableStateOf(false) }
     var showResolutionDialog by remember { mutableStateOf(false) }
+    var showAudioTrackDialog by remember { mutableStateOf(false) }
     var pendingDownloadType by remember { mutableStateOf<DownloadType?>(null) }
     var pendingPhotoUrls by remember { mutableStateOf<List<String>?>(null) }
     var customFileNameInput by remember { mutableStateOf("") }
@@ -358,6 +360,52 @@ fun MediaPreviewCard(
                             Icon(
                                 imageVector = Icons.Default.ArrowDropDown,
                                 contentDescription = "Ubah Resolusi",
+                                modifier = Modifier.size(16.dp)
+                            )
+                        },
+                        shape = RoundedCornerShape(8.dp),
+                        colors = AssistChipDefaults.assistChipColors(
+                            containerColor = MaterialTheme.colorScheme.surface
+                        )
+                    )
+                }
+            }
+
+            // Opsi Pemilihan Audio / Dubbing (Jika ada multi-track audio atau auto-dubbing AI dari YouTube)
+            if (media.availableAudioTracks.size > 1) {
+                Spacer(modifier = Modifier.height(6.dp))
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.RecordVoiceOver,
+                        contentDescription = null,
+                        tint = TikTokPink,
+                        modifier = Modifier.size(18.dp)
+                    )
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text(
+                        text = "Audio:",
+                        style = MaterialTheme.typography.bodySmall,
+                        fontWeight = FontWeight.Medium
+                    )
+                    Spacer(modifier = Modifier.width(6.dp))
+                    val selectedTrack = media.selectedAudioTrack
+                    AssistChip(
+                        onClick = { showAudioTrackDialog = true },
+                        label = {
+                            Text(
+                                text = selectedTrack?.displayName ?: "Suara Asli",
+                                fontWeight = FontWeight.Bold,
+                                maxLines = 1,
+                                overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
+                            )
+                        },
+                        trailingIcon = {
+                            Icon(
+                                imageVector = Icons.Default.ArrowDropDown,
+                                contentDescription = "Pilih Audio / Dubbing",
                                 modifier = Modifier.size(16.dp)
                             )
                         },
@@ -866,6 +914,70 @@ fun MediaPreviewCard(
             confirmButton = {},
             dismissButton = {
                 TextButton(onClick = { showResolutionDialog = false }) {
+                    Text("Tutup")
+                }
+            }
+        )
+    }
+
+    // Dialog Pemilihan Audio / Dubbing
+    if (showAudioTrackDialog) {
+        AlertDialog(
+            onDismissRequest = { showAudioTrackDialog = false },
+            icon = { Icon(Icons.Default.RecordVoiceOver, contentDescription = null, tint = TikTokPink) },
+            title = { Text("Pilih Audio / Dubbing", fontWeight = FontWeight.Bold) },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    media.availableAudioTracks.forEach { track ->
+                        val currentSelectedId = media.selectedAudioTrackId ?: media.selectedAudioTrack?.id
+                        val isSelected = track.id == currentSelectedId
+                        Surface(
+                            shape = RoundedCornerShape(10.dp),
+                            color = if (isSelected) TikTokPink.copy(alpha = 0.15f) else MaterialTheme.colorScheme.surface,
+                            border = BorderStroke(
+                                width = if (isSelected) 1.5.dp else 0.5.dp,
+                                color = if (isSelected) TikTokPink else MaterialTheme.colorScheme.outlineVariant
+                            ),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable {
+                                    showAudioTrackDialog = false
+                                    onChangeAudioTrack(track.id)
+                                }
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                RadioButton(
+                                    selected = isSelected,
+                                    onClick = {
+                                        showAudioTrackDialog = false
+                                        onChangeAudioTrack(track.id)
+                                    }
+                                )
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Column {
+                                    Text(text = track.displayName, fontWeight = FontWeight.Bold)
+                                    val desc = when {
+                                        track.isOriginal -> "Suara asli bawaan video (Bukan AI)"
+                                        track.isAutoDubbed -> "Alih suara otomatis oleh AI YouTube"
+                                        else -> "Trek audio alternatif"
+                                    }
+                                    Text(
+                                        text = desc,
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+            },
+            confirmButton = {},
+            dismissButton = {
+                TextButton(onClick = { showAudioTrackDialog = false }) {
                     Text("Tutup")
                 }
             }
