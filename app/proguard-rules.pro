@@ -19,8 +19,8 @@
 -keep class com.google.gson.** { *; }
 -keep class * extends com.google.gson.reflect.TypeToken
 -keepclassmembers class * extends com.google.gson.reflect.TypeToken { *; }
--keep class com.libretok.downloader.data.model.** { *; }
--keepclassmembers class com.libretok.downloader.data.model.** { *; }
+-keep class com.libretok.downloader.data.** { *; }
+-keepclassmembers class com.libretok.downloader.data.** { *; }
 -keepclassmembers class * {
     @com.google.gson.annotations.SerializedName <fields>;
 }

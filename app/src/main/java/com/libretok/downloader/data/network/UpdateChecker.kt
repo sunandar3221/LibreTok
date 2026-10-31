@@ -1,26 +1,11 @@
 package com.libretok.downloader.data.network
 
-import com.google.gson.Gson
-import com.google.gson.annotations.SerializedName
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import org.json.JSONObject
 import java.util.concurrent.TimeUnit
-
-data class GithubRelease(
-    @SerializedName("tag_name") val tagName: String?,
-    @SerializedName("name") val name: String?,
-    @SerializedName("body") val body: String?,
-    @SerializedName("html_url") val htmlUrl: String?,
-    @SerializedName("assets") val assets: List<GithubAsset>?
-)
-
-data class GithubAsset(
-    @SerializedName("name") val name: String?,
-    @SerializedName("browser_download_url") val downloadUrl: String?,
-    @SerializedName("size") val size: Long?
-)
 
 data class AppUpdateInfo(
     val latestVersion: String,
@@ -35,8 +20,7 @@ class UpdateChecker(
     private val client: OkHttpClient = OkHttpClient.Builder()
         .connectTimeout(15, TimeUnit.SECONDS)
         .readTimeout(15, TimeUnit.SECONDS)
-        .build(),
-    private val gson: Gson = Gson()
+        .build()
 ) {
     suspend fun checkUpdate(currentVersion: String = "1.0.2"): Result<AppUpdateInfo> = withContext(Dispatchers.IO) {
         try {
@@ -53,21 +37,38 @@ class UpdateChecker(
             }
 
             val body = response.body?.string() ?: return@withContext Result.failure(Exception("Respon update kosong"))
-            val release = gson.fromJson(body, GithubRelease::class.java)
+            val json = JSONObject(body)
 
-            val rawTag = release.tagName?.replace("v", "")?.trim() ?: ""
-            val apkAsset = release.assets?.firstOrNull { it.name?.endsWith(".apk", ignoreCase = true) == true }
-            val downloadUrl = apkAsset?.downloadUrl ?: release.htmlUrl ?: "https://github.com/sunandar3221/LibreTok/releases/latest"
-            val releasePageUrl = release.htmlUrl ?: "https://github.com/sunandar3221/LibreTok/releases/latest"
+            val tagName = json.optString("tag_name", "").trim()
+            val releaseName = json.optString("name", "").trim()
+            val releaseBody = json.optString("body", "").trim()
+            val htmlUrl = json.optString("html_url", "https://github.com/sunandar3221/LibreTok/releases/latest")
 
+            var downloadUrl = htmlUrl
+            val assets = json.optJSONArray("assets")
+            if (assets != null) {
+                for (i in 0 until assets.length()) {
+                    val asset = assets.optJSONObject(i)
+                    val assetName = asset?.optString("name", "") ?: ""
+                    if (assetName.endsWith(".apk", ignoreCase = true)) {
+                        val apkDownloadUrl = asset?.optString("browser_download_url", "")
+                        if (!apkDownloadUrl.isNullOrBlank()) {
+                            downloadUrl = apkDownloadUrl
+                            break
+                        }
+                    }
+                }
+            }
+
+            val rawTag = tagName.replace("v", "").replace("V", "").trim()
             val isNewer = isVersionNewer(rawTag, currentVersion)
 
             val info = AppUpdateInfo(
-                latestVersion = release.tagName ?: "v$rawTag",
+                latestVersion = if (tagName.isNotBlank()) tagName else "v$rawTag",
                 currentVersion = "v$currentVersion",
-                changelog = release.body ?: "Pembaruan versi terbaru LibreTok dengan peningkatan fitur dan stabilitas.",
+                changelog = if (releaseBody.isNotBlank()) releaseBody else "Pembaruan versi terbaru LibreTok dengan peningkatan fitur dan stabilitas.",
                 downloadUrl = downloadUrl,
-                releasePageUrl = releasePageUrl,
+                releasePageUrl = htmlUrl,
                 isUpdateAvailable = isNewer
             )
             Result.success(info)

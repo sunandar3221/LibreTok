@@ -348,7 +348,12 @@ fun MediaPreviewCard(
                     Spacer(modifier = Modifier.width(6.dp))
                     AssistChip(
                         onClick = { showResolutionDialog = true },
-                        label = { Text(media.selectedQuality, fontWeight = FontWeight.Bold) },
+                        label = {
+                            Text(
+                                text = if (isAutoResolution) "${media.selectedQuality} (Auto)" else media.selectedQuality,
+                                fontWeight = FontWeight.Bold
+                            )
+                        },
                         trailingIcon = {
                             Icon(
                                 imageVector = Icons.Default.ArrowDropDown,
