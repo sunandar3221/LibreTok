@@ -23,6 +23,43 @@ data class YouTubeOEmbed(
     @SerializedName("thumbnail_url") val thumbnailUrl: String?
 )
 
+data class InnertubePlayerResponse(
+    @SerializedName("playabilityStatus") val playabilityStatus: InnertubePlayabilityStatus?,
+    @SerializedName("streamingData") val streamingData: InnertubeStreamingData?,
+    @SerializedName("videoDetails") val videoDetails: InnertubeVideoDetails?
+)
+
+data class InnertubePlayabilityStatus(
+    @SerializedName("status") val status: String?,
+    @SerializedName("reason") val reason: String?
+)
+
+data class InnertubeStreamingData(
+    @SerializedName("formats") val formats: List<InnertubeFormat>?,
+    @SerializedName("adaptiveFormats") val adaptiveFormats: List<InnertubeFormat>?
+)
+
+data class InnertubeFormat(
+    @SerializedName("itag") val itag: Int?,
+    @SerializedName("url") val url: String?,
+    @SerializedName("mimeType") val mimeType: String?,
+    @SerializedName("bitrate") val bitrate: Long?,
+    @SerializedName("width") val width: Int?,
+    @SerializedName("height") val height: Int?,
+    @SerializedName("contentLength") val contentLength: String?,
+    @SerializedName("qualityLabel") val qualityLabel: String?,
+    @SerializedName("approxDurationMs") val approxDurationMs: String?
+)
+
+data class InnertubeVideoDetails(
+    @SerializedName("videoId") val videoId: String?,
+    @SerializedName("title") val title: String?,
+    @SerializedName("lengthSeconds") val lengthSeconds: String?,
+    @SerializedName("author") val author: String?,
+    @SerializedName("channelId") val channelId: String?,
+    @SerializedName("shortDescription") val shortDescription: String?
+)
+
 class TikTokApiService(
     private val client: OkHttpClient = OkHttpClient.Builder()
         .connectTimeout(15, TimeUnit.SECONDS)
@@ -40,7 +77,7 @@ class TikTokApiService(
             "https://cobaltapi.cjs.nz/"
         )
         private val URL_PATTERN = Pattern.compile("https?://[^\\s<>\"'\\[\\]{}|^`]+")
-        private val YOUTUBE_ID_PATTERN = Pattern.compile("(?:v=|youtu\\.be/|shorts/)([a-zA-Z0-9_-]{11})")
+        private val YOUTUBE_ID_PATTERN = Pattern.compile("(?:v=|youtu\\.be/|shorts/|embed/|/v/)([a-zA-Z0-9_-]{11})")
         private val INSTAGRAM_USER_PATTERN = Pattern.compile("instagram\\.com/([a-zA-Z0-9._]+)/(?:p|reel|tv|reels)")
         private val JSON_MEDIA_TYPE = "application/json; charset=utf-8".toMediaType()
     }
@@ -179,8 +216,27 @@ class TikTokApiService(
             return@withContext Result.failure(
                 Exception("Video TikTok tidak dapat ditemukan. Pastikan tautan benar dan video bersifat publik.")
             )
+        } else if (platform == "YouTube") {
+            // 1. Coba YouTube Innertube player API langsung (cepat, stabil, tanpa blokir bot datacenter)
+            val innertubeResult = fetchYouTubeInnertube(cleanUrl, resolved, extracted, cleanQuality)
+            if (innertubeResult.isSuccess) {
+                return@withContext innertubeResult
+            }
+
+            // 2. Fallback ke Cobalt jika Innertube gagal
+            var cobaltResult = fetchCobalt(cleanUrl, platform, cleanQuality)
+            if (cobaltResult.isFailure && cleanUrl != resolved) {
+                cobaltResult = fetchCobalt(resolved, platform, cleanQuality)
+            }
+            if (cobaltResult.isSuccess) {
+                return@withContext cobaltResult
+            }
+
+            val errorMsg = innertubeResult.exceptionOrNull()?.message
+                ?: "Video YouTube tidak ditemukan atau dibatasi. Pastikan video masih tersedia dan bersifat publik."
+            return@withContext Result.failure(Exception(errorMsg))
         } else {
-            // Instagram, YouTube, Facebook, etc.
+            // Instagram, Facebook, Twitter, etc.
             var cobaltResult = fetchCobalt(cleanUrl, platform, cleanQuality)
             if (cobaltResult.isFailure && cleanUrl != resolved) {
                 cobaltResult = fetchCobalt(resolved, platform, cleanQuality)
@@ -191,7 +247,6 @@ class TikTokApiService(
 
             val friendlyMsg = when (platform) {
                 "Instagram" -> "Konten Instagram tidak dapat diakses atau akun bersifat privat. Pastikan postingan/Reel bersifat publik dan coba salin link langsung dari menu Bagikan di Instagram."
-                "YouTube" -> "Video YouTube tidak ditemukan atau dibatasi. Pastikan video masih tersedia dan bersifat publik."
                 "Facebook" -> "Video Facebook tidak dapat diakses. Pastikan video berasal dari postingan publik (bukan grup privat)."
                 else -> "Gagal memproses tautan video dari $platform. Pastikan tautan masih aktif dan bersifat publik."
             }
@@ -267,6 +322,174 @@ class TikTokApiService(
                 platform = "TikTok",
                 description = postTitle,
                 selectedQuality = "${quality}p"
+            )
+
+            Result.success(media)
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
+    fun extractYouTubeId(url: String): String? {
+        val matcher = YOUTUBE_ID_PATTERN.matcher(url)
+        return if (matcher.find()) matcher.group(1) else null
+    }
+
+    private suspend fun fetchYouTubeInnertube(
+        cleanUrl: String,
+        resolvedUrl: String,
+        extractedUrl: String,
+        quality: String = "1080"
+    ): Result<TikTokMedia> = withContext(Dispatchers.IO) {
+        try {
+            val videoId = extractYouTubeId(cleanUrl)
+                ?: extractYouTubeId(resolvedUrl)
+                ?: extractYouTubeId(extractedUrl)
+                ?: return@withContext Result.failure(Exception("ID video YouTube tidak ditemukan"))
+
+            val canonicalUrl = "https://www.youtube.com/watch?v=$videoId"
+
+            // Ambil oEmbed secara paralel untuk judul, channel, dan thumbnail resmi
+            val oEmbedDeferred = async { fetchYouTubeOEmbed(canonicalUrl) }
+
+            // Ambil progressive stream (video + audio muxed) melalui client ANDROID
+            val videoPayload = mapOf(
+                "videoId" to videoId,
+                "racyCheckOk" to true,
+                "contentCheckOk" to true,
+                "context" to mapOf(
+                    "client" to mapOf(
+                        "clientName" to "ANDROID",
+                        "clientVersion" to "21.26.364",
+                        "androidSdkVersion" to 30,
+                        "osName" to "Android",
+                        "osVersion" to "11",
+                        "hl" to "en",
+                        "gl" to "US"
+                    )
+                )
+            )
+
+            val videoRequest = Request.Builder()
+                .url("https://www.youtube.com/youtubei/v1/player")
+                .header("Content-Type", "application/json")
+                .header("User-Agent", "com.google.android.youtube/21.26.364 (Linux; U; Android 11) gzip")
+                .header("Accept", "application/json")
+                .post(gson.toJson(videoPayload).toRequestBody(JSON_MEDIA_TYPE))
+                .build()
+
+            val videoResponse = client.newCall(videoRequest).execute()
+            if (!videoResponse.isSuccessful) {
+                return@withContext Result.failure(Exception("YouTube API gagal merespon (HTTP ${videoResponse.code})"))
+            }
+
+            val videoBody = videoResponse.body?.string()
+                ?: return@withContext Result.failure(Exception("Respon YouTube kosong"))
+            val playerResp = gson.fromJson(videoBody, InnertubePlayerResponse::class.java)
+
+            val status = playerResp?.playabilityStatus?.status
+            if (status != "OK") {
+                val reason = playerResp?.playabilityStatus?.reason
+                    ?: "Video YouTube tidak dapat diputar (Status: $status)"
+                return@withContext Result.failure(Exception(reason))
+            }
+
+            val formats = playerResp.streamingData?.formats ?: emptyList()
+            val validFormats = formats.filter { !it.url.isNullOrBlank() }
+            val chosenFormat = validFormats.maxByOrNull { it.bitrate ?: 0L }
+
+            val videoUrl = chosenFormat?.url
+            if (videoUrl.isNullOrBlank()) {
+                return@withContext Result.failure(Exception("Format video YouTube tidak tersedia untuk diunduh"))
+            }
+
+            // Ambil stream audio m4a/aac melalui client IOS
+            val audioFormatDeferred = async {
+                try {
+                    val audioPayload = mapOf(
+                        "videoId" to videoId,
+                        "racyCheckOk" to true,
+                        "contentCheckOk" to true,
+                        "context" to mapOf(
+                            "client" to mapOf(
+                                "clientName" to "IOS",
+                                "clientVersion" to "20.10.4",
+                                "deviceMake" to "Apple",
+                                "deviceModel" to "iPhone16,2",
+                                "osName" to "iPhone",
+                                "osVersion" to "18.3.2.22D82",
+                                "hl" to "en",
+                                "gl" to "US"
+                            )
+                        )
+                    )
+
+                    val audioRequest = Request.Builder()
+                        .url("https://www.youtube.com/youtubei/v1/player")
+                        .header("Content-Type", "application/json")
+                        .header("User-Agent", "com.google.ios.youtube/20.10.4 (iPhone16,2; U; CPU iOS 18_3_2 like Mac OS X; en_US)")
+                        .header("Accept", "application/json")
+                        .post(gson.toJson(audioPayload).toRequestBody(JSON_MEDIA_TYPE))
+                        .build()
+
+                    val audioResp = client.newCall(audioRequest).execute()
+                    if (audioResp.isSuccessful) {
+                        val aBody = audioResp.body?.string()
+                        val aJson = gson.fromJson(aBody, InnertubePlayerResponse::class.java)
+                        val adaptives = aJson?.streamingData?.adaptiveFormats ?: emptyList()
+                        adaptives.filter { it.mimeType?.startsWith("audio/mp4") == true && !it.url.isNullOrBlank() }
+                            .maxByOrNull { it.bitrate ?: 0L }
+                            ?.url
+                    } else null
+                } catch (_: Exception) {
+                    null
+                }
+            }
+
+            val ytOEmbed = oEmbedDeferred.await()
+            val musicUrl = audioFormatDeferred.await()
+
+            val details = playerResp.videoDetails
+            val title = ytOEmbed?.title?.ifBlank { null }
+                ?: details?.title?.ifBlank { null }
+                ?: "YouTube Video"
+
+            val authorName = ytOEmbed?.authorName?.ifBlank { null }
+                ?: details?.author?.ifBlank { null }
+                ?: "YouTube Creator"
+
+            val authorUsername = ytOEmbed?.authorUrl?.substringAfterLast("/")?.replace("@", "")
+                ?: details?.channelId
+                ?: "youtube"
+
+            val coverUrl = ytOEmbed?.thumbnailUrl
+                ?: "https://i.ytimg.com/vi/$videoId/hqdefault.jpg"
+
+            val duration = details?.lengthSeconds?.toIntOrNull()
+                ?: ((chosenFormat.approxDurationMs?.toLongOrNull() ?: 0L) / 1000L).toInt()
+
+            val sizeBytes = chosenFormat.contentLength?.toLongOrNull() ?: 0L
+
+            val media = TikTokMedia(
+                id = videoId,
+                title = title,
+                authorName = authorName,
+                authorUsername = authorUsername,
+                authorAvatar = "",
+                coverUrl = coverUrl,
+                videoUrl = videoUrl,
+                hdVideoUrl = videoUrl,
+                wmVideoUrl = null,
+                musicUrl = musicUrl,
+                musicTitle = if (musicUrl != null) "$title (Audio)" else null,
+                duration = duration,
+                sizeBytes = sizeBytes,
+                isImagesPost = false,
+                images = emptyList(),
+                originalUrl = canonicalUrl,
+                platform = "YouTube",
+                description = title,
+                selectedQuality = chosenFormat.qualityLabel ?: "360p"
             )
 
             Result.success(media)

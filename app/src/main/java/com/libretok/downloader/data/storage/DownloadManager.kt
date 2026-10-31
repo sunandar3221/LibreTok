@@ -185,10 +185,19 @@ class DownloadManager(
                     throw Exception("Tautan menghasilkan respon HTML/Teks, bukan media valid")
                 }
 
-                // Deteksi otomatis jika tautan video ternyata mengembalikan berkas foto
+                // Deteksi otomatis jika tautan video ternyata berkas foto atau audio mp4/aac/m4a
                 val isActuallyImage = (type == DownloadType.VIDEO || type == DownloadType.HD_VIDEO) && mime.startsWith("image/")
-                val effectiveExt = if (isActuallyImage) "jpg" else extension
-                val effectiveMime = if (isActuallyImage) "image/jpeg" else mimeType
+                val isActuallyM4a = type == DownloadType.AUDIO && (mime.contains("mp4") || mime.contains("m4a") || mime.contains("aac"))
+                val effectiveExt = when {
+                    isActuallyImage -> "jpg"
+                    isActuallyM4a -> "m4a"
+                    else -> extension
+                }
+                val effectiveMime = when {
+                    isActuallyImage -> "image/jpeg"
+                    isActuallyM4a -> "audio/mp4"
+                    else -> mimeType
+                }
                 val effectiveSubDir = if (isActuallyImage) (Environment.DIRECTORY_PICTURES + "/LibreTok") else subDir
                 val effectiveCollectionUri = if (isActuallyImage) {
                     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
@@ -197,7 +206,11 @@ class DownloadManager(
                         MediaStore.Images.Media.EXTERNAL_CONTENT_URI
                     }
                 } else collectionUri
-                val effectiveFileName = if (isActuallyImage) fileName.replace(".mp4", ".jpg") else fileName
+                val effectiveFileName = when {
+                    isActuallyImage -> fileName.replace(".mp4", ".jpg")
+                    isActuallyM4a -> fileName.replace(".mp3", ".m4a")
+                    else -> fileName
+                }
                 val effectiveType = if (isActuallyImage) DownloadType.PHOTO else type
 
                 val expectedTotalBytes = body.contentLength()
