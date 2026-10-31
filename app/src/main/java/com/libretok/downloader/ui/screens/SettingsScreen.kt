@@ -12,7 +12,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.OpenInNew
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
-import androidx.compose.runtime.Composable
+import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -24,13 +24,24 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.libretok.downloader.ui.theme.TikTokCyan
 import com.libretok.downloader.ui.theme.TikTokPink
+import com.libretok.downloader.ui.viewmodel.MainViewModel
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SettingsScreen(
+    viewModel: MainViewModel,
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
+
+    val askRename by viewModel.settingsManager.askRenameBeforeDownload.collectAsState()
+    val isAutoResolution by viewModel.settingsManager.isAutoResolution.collectAsState()
+    val defaultResolution by viewModel.settingsManager.defaultResolution.collectAsState()
+
+    val isCheckingUpdate by viewModel.isCheckingUpdate.collectAsState()
+    val updateCheckMessage by viewModel.updateCheckMessage.collectAsState()
+
+    var showResolutionPicker by remember { mutableStateOf(false) }
 
     fun openUrl(url: String) {
         val intent = Intent(Intent.ACTION_VIEW, Uri.parse(url))
@@ -58,7 +69,7 @@ fun SettingsScreen(
                 .padding(horizontal = 16.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
-            // Free & Open Source Card
+            // Free & Open Source Banner
             item {
                 Card(
                     modifier = Modifier.fillMaxWidth(),
@@ -92,9 +103,172 @@ fun SettingsScreen(
                                     color = TikTokPink
                                 )
                                 Text(
-                                    text = "Download video & audio tanpa iklan, tanpa batas",
+                                    text = "Download video, musik & foto tanpa watermark & iklan",
                                     style = MaterialTheme.typography.bodyMedium,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Pengaturan Unduhan (Opsi Resolusi & Rename File)
+            item {
+                Text(
+                    text = "Preferensi Unduhan",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold
+                )
+            }
+
+            item {
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(16.dp),
+                    colors = CardDefaults.cardColors(
+                        containerColor = MaterialTheme.colorScheme.surfaceVariant
+                    )
+                ) {
+                    Column(modifier = Modifier.padding(16.dp)) {
+                        // Switch Rename File
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.DriveFileRenameOutline,
+                                contentDescription = null,
+                                tint = TikTokCyan,
+                                modifier = Modifier.size(24.dp)
+                            )
+                            Spacer(modifier = Modifier.width(14.dp))
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = "Tanya Nama Berkas (Rename)",
+                                    style = MaterialTheme.typography.titleMedium,
+                                    fontWeight = FontWeight.SemiBold
+                                )
+                                Text(
+                                    text = if (askRename) "Konfirmasi nama berkas kustom sebelum mengunduh" else "Langsung unduh dengan judul asli secara otomatis",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                            Switch(
+                                checked = askRename,
+                                onCheckedChange = { viewModel.settingsManager.setAskRenameBeforeDownload(it) }
+                            )
+                        }
+
+                        HorizontalDivider(modifier = Modifier.padding(vertical = 12.dp))
+
+                        // Switch Auto-Resolution
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.HighQuality,
+                                contentDescription = null,
+                                tint = TikTokCyan,
+                                modifier = Modifier.size(24.dp)
+                            )
+                            Spacer(modifier = Modifier.width(14.dp))
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = "Pilihan Resolusi Otomatis",
+                                    style = MaterialTheme.typography.titleMedium,
+                                    fontWeight = FontWeight.SemiBold
+                                )
+                                Text(
+                                    text = if (isAutoResolution) "Otomatis mengunduh dengan resolusi default ($defaultResolution)" else "Resolusi manual (dapat diganti langsung di pratinjau)",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                            Switch(
+                                checked = isAutoResolution,
+                                onCheckedChange = { viewModel.settingsManager.setAutoResolution(it) }
+                            )
+                        }
+
+                        if (isAutoResolution) {
+                            HorizontalDivider(modifier = Modifier.padding(vertical = 12.dp))
+
+                            // Pilihan Default Resolution
+                            SettingsClickableRow(
+                                icon = Icons.Default.SettingsSuggest,
+                                title = "Kualitas Video Default",
+                                value = "$defaultResolution ${if (defaultResolution == "1080p") "(Full HD)" else if (defaultResolution == "720p") "(HD)" else ""}",
+                                actionHint = "Ubah Kualitas",
+                                onClick = { showResolutionPicker = true }
+                            )
+                        }
+                    }
+                }
+            }
+
+            // Pembaruan Aplikasi
+            item {
+                Text(
+                    text = "Pembaruan Aplikasi",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold
+                )
+            }
+
+            item {
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(16.dp),
+                    colors = CardDefaults.cardColors(
+                        containerColor = MaterialTheme.colorScheme.surfaceVariant
+                    )
+                ) {
+                    Column(modifier = Modifier.padding(16.dp)) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable(enabled = !isCheckingUpdate) {
+                                    viewModel.checkForUpdate(isManual = true)
+                                },
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.SystemUpdate,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.size(24.dp)
+                            )
+                            Spacer(modifier = Modifier.width(14.dp))
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = "Periksa Pembaruan",
+                                    style = MaterialTheme.typography.titleMedium,
+                                    fontWeight = FontWeight.SemiBold
+                                )
+                                Text(
+                                    text = when {
+                                        isCheckingUpdate -> "Memeriksa rilis terbaru di GitHub..."
+                                        updateCheckMessage != null -> updateCheckMessage!!
+                                        else -> "Tekan untuk memeriksa versi terbaru LibreTok"
+                                    },
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = if (updateCheckMessage != null) TikTokCyan else MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                            if (isCheckingUpdate) {
+                                CircularProgressIndicator(
+                                    modifier = Modifier.size(20.dp),
+                                    strokeWidth = 2.dp
+                                )
+                            } else {
+                                Icon(
+                                    imageVector = Icons.Default.Refresh,
+                                    contentDescription = "Cek",
+                                    tint = MaterialTheme.colorScheme.primary,
+                                    modifier = Modifier.size(20.dp)
                                 )
                             }
                         }
@@ -252,7 +426,7 @@ fun SettingsScreen(
                         SettingsInfoRow(
                             icon = Icons.Default.Info,
                             title = "Versi Aplikasi",
-                            value = "LibreTok v1.0.1 (Signed Release)"
+                            value = "LibreTok v1.0.2 (Signed Release)"
                         )
                         HorizontalDivider(modifier = Modifier.padding(vertical = 12.dp))
                         SettingsInfoRow(
@@ -268,6 +442,66 @@ fun SettingsScreen(
                 Spacer(modifier = Modifier.height(24.dp))
             }
         }
+    }
+
+    // Dialog Pemilihan Default Resolution
+    if (showResolutionPicker) {
+        val resolutionOptions = listOf(
+            "1080p" to "1080p (Full HD - Rekomendasi)",
+            "720p" to "720p (HD Standar)",
+            "480p" to "480p (Hemat Kuota)",
+            "360p" to "360p (Ukuran Terkecil)"
+        )
+        AlertDialog(
+            onDismissRequest = { showResolutionPicker = false },
+            title = {
+                Text("Pilih Kualitas Video Default", fontWeight = FontWeight.Bold)
+            },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    resolutionOptions.forEach { (resKey, resLabel) ->
+                        Surface(
+                            shape = RoundedCornerShape(10.dp),
+                            color = if (defaultResolution == resKey) TikTokCyan.copy(alpha = 0.2f) else MaterialTheme.colorScheme.surface,
+                            border = androidx.compose.foundation.BorderStroke(
+                                width = 1.dp,
+                                color = if (defaultResolution == resKey) TikTokCyan else MaterialTheme.colorScheme.outline.copy(alpha = 0.2f)
+                            ),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable {
+                                    viewModel.settingsManager.setDefaultResolution(resKey)
+                                    showResolutionPicker = false
+                                }
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(horizontal = 14.dp, vertical = 12.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                RadioButton(
+                                    selected = defaultResolution == resKey,
+                                    onClick = {
+                                        viewModel.settingsManager.setDefaultResolution(resKey)
+                                        showResolutionPicker = false
+                                    }
+                                )
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text(
+                                    text = resLabel,
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    fontWeight = if (defaultResolution == resKey) FontWeight.Bold else FontWeight.Normal
+                                )
+                            }
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { showResolutionPicker = false }) {
+                    Text("Tutup")
+                }
+            }
+        )
     }
 }
 

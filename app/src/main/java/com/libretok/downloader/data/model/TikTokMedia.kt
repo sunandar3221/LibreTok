@@ -18,7 +18,10 @@ data class TikTokMedia(
     val isImagesPost: Boolean = false,
     val images: List<String> = emptyList(),
     val originalUrl: String,
-    val platform: String = "TikTok"
+    val platform: String = "TikTok",
+    val description: String = "",
+    val availableResolutions: List<String> = listOf("1080p", "720p", "480p", "360p"),
+    val selectedQuality: String = "1080p"
 )
 
 // DTO for Cobalt API

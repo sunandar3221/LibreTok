@@ -3,7 +3,9 @@ package com.libretok.downloader.ui.screens
 import android.content.ClipboardManager
 import android.content.Context
 import androidx.compose.animation.*
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
@@ -21,6 +23,7 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.libretok.downloader.data.model.ActiveDownload
@@ -44,6 +47,14 @@ fun HomeScreen(
     val mediaPreview by viewModel.mediaPreview.collectAsState()
     val clipboardDetectedUrl by viewModel.clipboardDetectedUrl.collectAsState()
     val activeDownloads by viewModel.activeDownloads.collectAsState()
+
+    val askRename by viewModel.settingsManager.askRenameBeforeDownload.collectAsState()
+    val isAutoResolution by viewModel.settingsManager.isAutoResolution.collectAsState()
+    val batchQueue by viewModel.batchQueue.collectAsState()
+    val isBatchRunning by viewModel.isBatchRunning.collectAsState()
+
+    var isBatchMode by remember { mutableStateOf(false) }
+    var batchInputText by remember { mutableStateOf("") }
 
     val logoBrush = remember { Brush.linearGradient(listOf(TikTokPink, TikTokCyan)) }
 
@@ -164,7 +175,7 @@ fun HomeScreen(
             }
         }
 
-        // Input URL Field Card
+        // Input URL Field Card (Mode Tunggal & Unduh Massal)
         item(key = "input_card") {
             Card(
                 modifier = Modifier.fillMaxWidth(),
@@ -178,84 +189,334 @@ fun HomeScreen(
                         .fillMaxWidth()
                         .padding(16.dp)
                 ) {
-                    OutlinedTextField(
-                        value = urlInput,
-                        onValueChange = { viewModel.onUrlChange(it) },
-                        modifier = Modifier.fillMaxWidth(),
-                        placeholder = { Text("Tempel link TikTok, IG, YouTube, atau FB...") },
-                        leadingIcon = {
-                            Icon(Icons.Default.Link, contentDescription = null)
-                        },
-                        trailingIcon = {
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                if (urlInput.isNotBlank()) {
-                                    IconButton(onClick = { viewModel.clearUrl() }) {
-                                        Icon(Icons.Default.Clear, contentDescription = "Hapus")
-                                    }
-                                } else {
-                                    IconButton(onClick = {
-                                        val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
-                                        val clip = clipboard?.primaryClip?.getItemAt(0)?.text?.toString()
-                                        if (!clip.isNullOrBlank()) {
-                                            viewModel.onUrlChange(clip)
-                                            viewModel.fetchMedia(clip)
-                                        }
-                                    }) {
-                                        Icon(Icons.Default.ContentPaste, contentDescription = "Tempel")
-                                    }
-                                }
-                            }
-                        },
-                        shape = RoundedCornerShape(14.dp),
-                        singleLine = true
-                    )
-
-                    Spacer(modifier = Modifier.height(10.dp))
-
-                    // Supported Platform Chips - Scrollable to never collide on small screens
-                    LazyRow(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    // Mode Selector Tab (Link Tunggal vs Unduh Massal)
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .background(MaterialTheme.colorScheme.surface, RoundedCornerShape(12.dp))
+                            .padding(4.dp)
                     ) {
-                        items(listOf("TikTok", "Instagram", "YouTube", "Facebook")) { plat ->
-                            Surface(
-                                shape = RoundedCornerShape(8.dp),
-                                color = MaterialTheme.colorScheme.surface.copy(alpha = 0.85f)
+                        Surface(
+                            shape = RoundedCornerShape(10.dp),
+                            color = if (!isBatchMode) TikTokPink else Color.Transparent,
+                            modifier = Modifier
+                                .weight(1f)
+                                .clickable { isBatchMode = false }
+                        ) {
+                            Text(
+                                text = "Link Tunggal",
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 13.sp,
+                                color = if (!isBatchMode) Color.White else MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier
+                                    .padding(vertical = 8.dp)
+                                    .wrapContentWidth(Alignment.CenterHorizontally)
+                            )
+                        }
+
+                        Surface(
+                            shape = RoundedCornerShape(10.dp),
+                            color = if (isBatchMode) TikTokCyan else Color.Transparent,
+                            modifier = Modifier
+                                .weight(1f)
+                                .clickable { isBatchMode = true }
+                        ) {
+                            Row(
+                                modifier = Modifier
+                                    .padding(vertical = 8.dp)
+                                    .wrapContentWidth(Alignment.CenterHorizontally),
+                                verticalAlignment = Alignment.CenterVertically
                             ) {
+                                Icon(
+                                    imageVector = Icons.Default.Layers,
+                                    contentDescription = null,
+                                    tint = if (isBatchMode) Color.Black else MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier.size(15.dp)
+                                )
+                                Spacer(modifier = Modifier.width(4.dp))
                                 Text(
-                                    text = plat,
-                                    fontSize = 11.sp,
-                                    fontWeight = FontWeight.SemiBold,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
+                                    text = "Unduh Massal",
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 13.sp,
+                                    color = if (isBatchMode) Color.Black else MaterialTheme.colorScheme.onSurfaceVariant
                                 )
                             }
                         }
                     }
 
-                    Spacer(modifier = Modifier.height(12.dp))
+                    Spacer(modifier = Modifier.height(14.dp))
 
-                    Button(
-                        onClick = { viewModel.fetchMedia() },
-                        enabled = !isLoading && urlInput.isNotBlank(),
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(50.dp),
-                        shape = RoundedCornerShape(14.dp),
-                        colors = ButtonDefaults.buttonColors(containerColor = TikTokPink)
-                    ) {
-                        if (isLoading) {
-                            CircularProgressIndicator(
-                                modifier = Modifier.size(24.dp),
-                                color = Color.White,
-                                strokeWidth = 2.dp
-                            )
-                            Spacer(modifier = Modifier.width(10.dp))
-                            Text("Memproses Link...")
-                        } else {
-                            Icon(Icons.Default.Search, contentDescription = null)
+                    if (!isBatchMode) {
+                        // MODE TUNGGAL
+                        OutlinedTextField(
+                            value = urlInput,
+                            onValueChange = { viewModel.onUrlChange(it) },
+                            modifier = Modifier.fillMaxWidth(),
+                            placeholder = { Text("Tempel link TikTok, IG, YouTube, atau FB...") },
+                            leadingIcon = {
+                                Icon(Icons.Default.Link, contentDescription = null)
+                            },
+                            trailingIcon = {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    if (urlInput.isNotBlank()) {
+                                        IconButton(onClick = { viewModel.clearUrl() }) {
+                                            Icon(Icons.Default.Clear, contentDescription = "Hapus")
+                                        }
+                                    } else {
+                                        IconButton(onClick = {
+                                            val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
+                                            val clip = clipboard?.primaryClip?.getItemAt(0)?.text?.toString()
+                                            if (!clip.isNullOrBlank()) {
+                                                viewModel.onUrlChange(clip)
+                                                viewModel.fetchMedia(clip)
+                                            }
+                                        }) {
+                                            Icon(Icons.Default.ContentPaste, contentDescription = "Tempel")
+                                        }
+                                    }
+                                }
+                            },
+                            shape = RoundedCornerShape(14.dp),
+                            singleLine = true
+                        )
+
+                        Spacer(modifier = Modifier.height(10.dp))
+
+                        // Supported Platform Chips
+                        LazyRow(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            items(listOf("TikTok", "Instagram", "YouTube", "Facebook")) { plat ->
+                                Surface(
+                                    shape = RoundedCornerShape(8.dp),
+                                    color = MaterialTheme.colorScheme.surface.copy(alpha = 0.85f)
+                                ) {
+                                    Text(
+                                        text = plat,
+                                        fontSize = 11.sp,
+                                        fontWeight = FontWeight.SemiBold,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
+                                    )
+                                }
+                            }
+                        }
+
+                        Spacer(modifier = Modifier.height(12.dp))
+
+                        Button(
+                            onClick = { viewModel.fetchMedia() },
+                            enabled = !isLoading && urlInput.isNotBlank(),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(50.dp),
+                            shape = RoundedCornerShape(14.dp),
+                            colors = ButtonDefaults.buttonColors(containerColor = TikTokPink)
+                        ) {
+                            if (isLoading) {
+                                CircularProgressIndicator(
+                                    modifier = Modifier.size(24.dp),
+                                    color = Color.White,
+                                    strokeWidth = 2.dp
+                                )
+                                Spacer(modifier = Modifier.width(10.dp))
+                                Text("Memproses Link...")
+                            } else {
+                                Icon(Icons.Default.Search, contentDescription = null)
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text("Periksa & Unduh Video", fontWeight = FontWeight.Bold)
+                            }
+                        }
+                    } else {
+                        // MODE UNDUH MASSAL (BATCH DOWNLOAD)
+                        OutlinedTextField(
+                            value = batchInputText,
+                            onValueChange = { batchInputText = it },
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(130.dp),
+                            placeholder = { Text("Tempel daftar link di sini (satu link per baris)...") },
+                            shape = RoundedCornerShape(14.dp),
+                            maxLines = 6
+                        )
+
+                        Spacer(modifier = Modifier.height(10.dp))
+
+                        val extractedUrls = remember(batchInputText) {
+                            batchInputText.lines()
+                                .map { it.trim() }
+                                .filter { it.startsWith("http://") || it.startsWith("https://") }
+                        }
+
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            OutlinedButton(
+                                onClick = {
+                                    val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
+                                    val clip = clipboard?.primaryClip?.getItemAt(0)?.text?.toString()
+                                    if (!clip.isNullOrBlank()) {
+                                        batchInputText = if (batchInputText.isBlank()) clip else "$batchInputText\n$clip"
+                                    }
+                                },
+                                modifier = Modifier.weight(1f),
+                                shape = RoundedCornerShape(12.dp)
+                            ) {
+                                Icon(Icons.Default.ContentPaste, contentDescription = null, modifier = Modifier.size(16.dp))
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text("Tempel Link", fontSize = 12.sp)
+                            }
+
+                            if (batchInputText.isNotBlank()) {
+                                OutlinedButton(
+                                    onClick = { batchInputText = "" },
+                                    shape = RoundedCornerShape(12.dp)
+                                ) {
+                                    Text("Bersihkan", fontSize = 12.sp)
+                                }
+                            }
+                        }
+
+                        Spacer(modifier = Modifier.height(10.dp))
+
+                        Button(
+                            onClick = {
+                                viewModel.startBatchDownload(extractedUrls)
+                            },
+                            enabled = !isBatchRunning && extractedUrls.isNotEmpty(),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(50.dp),
+                            shape = RoundedCornerShape(14.dp),
+                            colors = ButtonDefaults.buttonColors(containerColor = TikTokCyan)
+                        ) {
+                            if (isBatchRunning) {
+                                CircularProgressIndicator(
+                                    modifier = Modifier.size(22.dp),
+                                    color = Color.Black,
+                                    strokeWidth = 2.dp
+                                )
+                                Spacer(modifier = Modifier.width(10.dp))
+                                Text("Sedang Mengunduh Massal...", color = Color.Black, fontWeight = FontWeight.Bold)
+                            } else {
+                                Icon(Icons.Default.CloudDownload, contentDescription = null, tint = Color.Black)
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text(
+                                    text = if (extractedUrls.isEmpty()) "Masukkan Minimal 1 Link" else "Unduh Sekaligus (${extractedUrls.size} Link)",
+                                    color = Color.Black,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Antrean Unduhan Massal (Batch Download Queue Card)
+        if (batchQueue.isNotEmpty()) {
+            item(key = "batch_queue_card") {
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(18.dp),
+                    colors = CardDefaults.cardColors(
+                        containerColor = MaterialTheme.colorScheme.surface
+                    ),
+                    border = BorderStroke(1.dp, TikTokCyan.copy(alpha = 0.5f))
+                ) {
+                    Column(modifier = Modifier.padding(16.dp)) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Icon(Icons.Default.Layers, contentDescription = null, tint = TikTokCyan)
                             Spacer(modifier = Modifier.width(8.dp))
-                            Text("Periksa & Unduh Video", fontWeight = FontWeight.Bold)
+                            val doneCount = batchQueue.count { it.status == com.libretok.downloader.data.model.BatchItemStatus.SUCCESS }
+                            Text(
+                                text = "Antrean Unduhan Massal ($doneCount/${batchQueue.size})",
+                                style = MaterialTheme.typography.titleMedium,
+                                fontWeight = FontWeight.Bold,
+                                modifier = Modifier.weight(1f)
+                            )
+                            if (isBatchRunning) {
+                                TextButton(onClick = { viewModel.cancelBatchDownload() }) {
+                                    Text("Batalkan", color = MaterialTheme.colorScheme.error, fontSize = 12.sp)
+                                }
+                            } else {
+                                TextButton(onClick = { viewModel.clearBatchQueue() }) {
+                                    Text("Tutup", fontSize = 12.sp)
+                                }
+                            }
+                        }
+
+                        Spacer(modifier = Modifier.height(8.dp))
+
+                        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            batchQueue.forEachIndexed { idx, item ->
+                                Surface(
+                                    shape = RoundedCornerShape(10.dp),
+                                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f),
+                                    modifier = Modifier.fillMaxWidth()
+                                ) {
+                                    Row(
+                                        modifier = Modifier.padding(10.dp),
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Text(
+                                            text = "#${idx + 1}",
+                                            fontWeight = FontWeight.Bold,
+                                            fontSize = 12.sp,
+                                            color = MaterialTheme.colorScheme.primary
+                                        )
+                                        Spacer(modifier = Modifier.width(8.dp))
+                                        Column(modifier = Modifier.weight(1f)) {
+                                            Text(
+                                                text = item.title.ifBlank { item.url },
+                                                style = MaterialTheme.typography.bodySmall,
+                                                fontWeight = FontWeight.Medium,
+                                                maxLines = 1,
+                                                overflow = TextOverflow.Ellipsis
+                                            )
+                                            val statusText = when (item.status) {
+                                                com.libretok.downloader.data.model.BatchItemStatus.WAITING -> "Menunggu antrean..."
+                                                com.libretok.downloader.data.model.BatchItemStatus.FETCHING -> "Memeriksa tautan..."
+                                                com.libretok.downloader.data.model.BatchItemStatus.DOWNLOADING -> "Sedang mengunduh..."
+                                                com.libretok.downloader.data.model.BatchItemStatus.SUCCESS -> "Berhasil disimpan ke Galeri"
+                                                com.libretok.downloader.data.model.BatchItemStatus.FAILED -> item.errorMessage ?: "Gagal"
+                                            }
+                                            Text(
+                                                text = statusText,
+                                                fontSize = 11.sp,
+                                                color = when (item.status) {
+                                                    com.libretok.downloader.data.model.BatchItemStatus.SUCCESS -> Color(0xFF00E676)
+                                                    com.libretok.downloader.data.model.BatchItemStatus.FAILED -> MaterialTheme.colorScheme.error
+                                                    else -> MaterialTheme.colorScheme.onSurfaceVariant
+                                                }
+                                            )
+                                        }
+
+                                        Spacer(modifier = Modifier.width(8.dp))
+
+                                        when (item.status) {
+                                            com.libretok.downloader.data.model.BatchItemStatus.WAITING -> {
+                                                Icon(Icons.Default.HourglassEmpty, contentDescription = null, tint = Color.Gray, modifier = Modifier.size(18.dp))
+                                            }
+                                            com.libretok.downloader.data.model.BatchItemStatus.FETCHING,
+                                            com.libretok.downloader.data.model.BatchItemStatus.DOWNLOADING -> {
+                                                CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp, color = TikTokCyan)
+                                            }
+                                            com.libretok.downloader.data.model.BatchItemStatus.SUCCESS -> {
+                                                Icon(Icons.Default.CheckCircle, contentDescription = null, tint = Color(0xFF00E676), modifier = Modifier.size(20.dp))
+                                            }
+                                            com.libretok.downloader.data.model.BatchItemStatus.FAILED -> {
+                                                Icon(Icons.Default.Error, contentDescription = null, tint = MaterialTheme.colorScheme.error, modifier = Modifier.size(20.dp))
+                                            }
+                                        }
+                                    }
+                                }
+                            }
                         }
                     }
                 }
@@ -302,8 +563,11 @@ fun HomeScreen(
                 MediaPreviewCard(
                     media = mediaPreview!!,
                     activeDownloads = activeDownloads,
-                    onDownloadClick = { type -> viewModel.startDownload(type) },
-                    onDownloadSelectedPhotos = { urls -> viewModel.downloadSelectedPhotos(urls) },
+                    askRename = askRename,
+                    isAutoResolution = isAutoResolution,
+                    onChangeResolution = { res -> viewModel.changeMediaResolution(res) },
+                    onDownloadClick = { type, customName -> viewModel.startDownload(type, customName) },
+                    onDownloadSelectedPhotos = { urls, customName -> viewModel.downloadSelectedPhotos(urls, customName) },
                     onCancelDownload = { downloadId -> viewModel.cancelDownload(downloadId) },
                     onPreviewClick = {
                         viewModel.openPlayer(PlayerTarget.StreamPreview(mediaPreview!!))

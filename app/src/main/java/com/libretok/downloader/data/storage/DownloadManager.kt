@@ -45,11 +45,12 @@ class DownloadManager(
 
     suspend fun downloadMedia(
         media: TikTokMedia,
-        type: DownloadType
+        type: DownloadType,
+        customFileName: String? = null
     ): Result<DownloadItem> = withContext(Dispatchers.IO) {
         if (type == DownloadType.PHOTO) {
             val list = if (media.images.isNotEmpty()) media.images else listOf(media.coverUrl)
-            val result = downloadPhotos(media, list)
+            val result = downloadPhotos(media, list, customBaseName = customFileName)
             return@withContext if (result.isSuccess && result.getOrNull()?.isNotEmpty() == true) {
                 Result.success(result.getOrNull()!!.first())
             } else {
@@ -69,7 +70,11 @@ class DownloadManager(
             return@withContext Result.failure(Exception("URL download tidak valid."))
         }
 
-        val baseTitle = sanitizeFilename(media.title.ifBlank { "TikTok_${media.id}" })
+        val baseTitle = if (!customFileName.isNullOrBlank()) {
+            sanitizeFilename(customFileName)
+        } else {
+            sanitizeFilename(media.title.ifBlank { "LibreTok_${media.platform}_${media.id}" })
+        }
         val (extension, mimeType, subDir, collectionUri) = when (type) {
             DownloadType.VIDEO, DownloadType.HD_VIDEO -> {
                 val ext = "mp4"
@@ -106,7 +111,11 @@ class DownloadManager(
             }
         }
 
-        val fileName = "LibreTok_${baseTitle}_${System.currentTimeMillis()}.$extension"
+        val fileName = if (!customFileName.isNullOrBlank()) {
+            "${baseTitle}.$extension"
+        } else {
+            "LibreTok_${baseTitle}_${System.currentTimeMillis()}.$extension"
+        }
 
         updateActiveDownload(
             ActiveDownload(
@@ -260,7 +269,8 @@ class DownloadManager(
 
     suspend fun downloadPhotos(
         media: TikTokMedia,
-        photoUrls: List<String>
+        photoUrls: List<String>,
+        customBaseName: String? = null
     ): Result<List<DownloadItem>> = withContext(Dispatchers.IO) {
         val urlsToDownload = photoUrls.filter { it.isNotBlank() }
         if (urlsToDownload.isEmpty()) {
@@ -268,7 +278,11 @@ class DownloadManager(
         }
 
         val downloadId = "${media.id}_PHOTO_${System.currentTimeMillis()}"
-        val baseTitle = sanitizeFilename(media.title.ifBlank { "${media.platform}_${media.id}" })
+        val baseTitle = if (!customBaseName.isNullOrBlank()) {
+            sanitizeFilename(customBaseName)
+        } else {
+            sanitizeFilename(media.title.ifBlank { "LibreTok_${media.platform}_${media.id}" })
+        }
         val totalCount = urlsToDownload.size
 
         updateActiveDownload(

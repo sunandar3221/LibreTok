@@ -1,5 +1,6 @@
 package com.libretok.downloader.ui.components
 
+import android.content.Context
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
@@ -23,6 +24,9 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -34,22 +38,45 @@ import com.libretok.downloader.data.model.DownloadType
 import com.libretok.downloader.data.model.TikTokMedia
 import com.libretok.downloader.ui.theme.TikTokCyan
 import com.libretok.downloader.ui.theme.TikTokPink
+import kotlinx.coroutines.delay
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun MediaPreviewCard(
     media: TikTokMedia,
     activeDownloads: Map<String, ActiveDownload>,
-    onDownloadClick: (DownloadType) -> Unit,
-    onDownloadSelectedPhotos: (List<String>) -> Unit = {},
+    askRename: Boolean = false,
+    isAutoResolution: Boolean = true,
+    onChangeResolution: (String) -> Unit = {},
+    onDownloadClick: (DownloadType, String?) -> Unit,
+    onDownloadSelectedPhotos: (List<String>, String?) -> Unit = { _, _ -> },
     onCancelDownload: (String) -> Unit,
     onPreviewClick: () -> Unit,
     modifier: Modifier = Modifier
 ) {
+    val clipboardManager = LocalClipboardManager.current
+    var isCaptionCopied by remember { mutableStateOf(false) }
+
+    // Dialog rename dan resolusi
+    var showRenameDialog by remember { mutableStateOf(false) }
+    var showResolutionDialog by remember { mutableStateOf(false) }
+    var pendingDownloadType by remember { mutableStateOf<DownloadType?>(null) }
+    var pendingPhotoUrls by remember { mutableStateOf<List<String>?>(null) }
+    var customFileNameInput by remember { mutableStateOf("") }
+
     val gradientBrush = remember {
         Brush.verticalGradient(
             colors = listOf(Color.Transparent, Color.Black.copy(alpha = 0.75f)),
             startY = 100f
         )
+    }
+
+    // Auto-reset status copy caption setelah 2.5 detik
+    LaunchedEffect(isCaptionCopied) {
+        if (isCaptionCopied) {
+            delay(2500)
+            isCaptionCopied = false
+        }
     }
 
     // State pilihan foto untuk unduhan multi-foto / carousel
@@ -61,6 +88,28 @@ fun MediaPreviewCard(
     val currentActiveDownload = activeDownloads.values.firstOrNull { download ->
         download.id.startsWith(media.id) ||
                 (media.title.isNotBlank() && download.title.contains(media.title.take(15)))
+    }
+
+    fun triggerDownload(type: DownloadType) {
+        if (askRename) {
+            pendingDownloadType = type
+            pendingPhotoUrls = null
+            customFileNameInput = media.title.take(40)
+            showRenameDialog = true
+        } else {
+            onDownloadClick(type, null)
+        }
+    }
+
+    fun triggerDownloadPhotos(urls: List<String>) {
+        if (askRename) {
+            pendingDownloadType = null
+            pendingPhotoUrls = urls
+            customFileNameInput = media.title.take(40)
+            showRenameDialog = true
+        } else {
+            onDownloadSelectedPhotos(urls, null)
+        }
     }
 
     Card(
@@ -233,16 +282,89 @@ fun MediaPreviewCard(
 
             Spacer(modifier = Modifier.height(12.dp))
 
-            // Video Title / Caption
-            Text(
-                text = media.title,
-                style = MaterialTheme.typography.bodyLarge,
-                fontWeight = FontWeight.Medium,
-                maxLines = 2,
-                overflow = TextOverflow.Ellipsis
-            )
+            // Caption / Deskripsi & Tombol Salin Caption
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.Top
+            ) {
+                Text(
+                    text = media.title,
+                    style = MaterialTheme.typography.bodyLarge,
+                    fontWeight = FontWeight.Medium,
+                    maxLines = 3,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f)
+                )
 
-            Spacer(modifier = Modifier.height(14.dp))
+                Spacer(modifier = Modifier.width(8.dp))
+
+                FilledTonalButton(
+                    onClick = {
+                        val textToCopy = media.description.ifBlank { media.title }
+                        clipboardManager.setText(AnnotatedString(textToCopy))
+                        isCaptionCopied = true
+                    },
+                    shape = RoundedCornerShape(10.dp),
+                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp),
+                    colors = ButtonDefaults.filledTonalButtonColors(
+                        containerColor = if (isCaptionCopied) Color(0xFF00E676).copy(alpha = 0.2f) else MaterialTheme.colorScheme.surface
+                    )
+                ) {
+                    Icon(
+                        imageVector = if (isCaptionCopied) Icons.Default.Check else Icons.Default.ContentCopy,
+                        contentDescription = "Salin Caption",
+                        tint = if (isCaptionCopied) Color(0xFF00E676) else MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.size(15.dp)
+                    )
+                    Spacer(modifier = Modifier.width(4.dp))
+                    Text(
+                        text = if (isCaptionCopied) "Disalin!" else "Salin",
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = if (isCaptionCopied) Color(0xFF00E676) else MaterialTheme.colorScheme.primary
+                    )
+                }
+            }
+
+            // Pilihan Resolusi Video (bisa diganti manual atau auto)
+            if (media.videoUrl.isNotBlank()) {
+                Spacer(modifier = Modifier.height(10.dp))
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.HighQuality,
+                        contentDescription = null,
+                        tint = TikTokCyan,
+                        modifier = Modifier.size(18.dp)
+                    )
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text(
+                        text = "Kualitas:",
+                        style = MaterialTheme.typography.bodySmall,
+                        fontWeight = FontWeight.Medium
+                    )
+                    Spacer(modifier = Modifier.width(6.dp))
+                    AssistChip(
+                        onClick = { showResolutionDialog = true },
+                        label = { Text(media.selectedQuality, fontWeight = FontWeight.Bold) },
+                        trailingIcon = {
+                            Icon(
+                                imageVector = Icons.Default.ArrowDropDown,
+                                contentDescription = "Ubah Resolusi",
+                                modifier = Modifier.size(16.dp)
+                            )
+                        },
+                        shape = RoundedCornerShape(8.dp),
+                        colors = AssistChipDefaults.assistChipColors(
+                            containerColor = MaterialTheme.colorScheme.surface
+                        )
+                    )
+                }
+            }
+
+            Spacer(modifier = Modifier.height(12.dp))
 
             // STATUS PROGRESS BAR LANGSUNG DI ATAS TOMBOL DOWNLOAD
             AnimatedVisibility(
@@ -474,7 +596,7 @@ fun MediaPreviewCard(
                 // Button 1: Download Video (Tanpa Watermark) - jika ada video
                 if (media.videoUrl.isNotBlank()) {
                     Button(
-                        onClick = { onDownloadClick(DownloadType.VIDEO) },
+                        onClick = { triggerDownload(DownloadType.VIDEO) },
                         enabled = !isAnyDownloading,
                         modifier = Modifier.fillMaxWidth(),
                         shape = RoundedCornerShape(12.dp),
@@ -505,7 +627,7 @@ fun MediaPreviewCard(
                 // Button 2: Download HD Video (if available)
                 if (!media.hdVideoUrl.isNullOrBlank()) {
                     FilledTonalButton(
-                        onClick = { onDownloadClick(DownloadType.HD_VIDEO) },
+                        onClick = { triggerDownload(DownloadType.HD_VIDEO) },
                         enabled = !isAnyDownloading,
                         modifier = Modifier.fillMaxWidth(),
                         shape = RoundedCornerShape(12.dp),
@@ -547,7 +669,7 @@ fun MediaPreviewCard(
                     Button(
                         onClick = {
                             val selectedUrls = selectedPhotoIndices.sorted().map { media.images[it] }
-                            onDownloadSelectedPhotos(selectedUrls)
+                            triggerDownloadPhotos(selectedUrls)
                         },
                         enabled = !isAnyDownloading && selectedPhotoIndices.isNotEmpty(),
                         modifier = Modifier.fillMaxWidth(),
@@ -581,7 +703,7 @@ fun MediaPreviewCard(
                 // Button 4: Download Audio / MP3
                 if (!media.musicUrl.isNullOrBlank()) {
                     OutlinedButton(
-                        onClick = { onDownloadClick(DownloadType.AUDIO) },
+                        onClick = { triggerDownload(DownloadType.AUDIO) },
                         enabled = !isAnyDownloading,
                         modifier = Modifier.fillMaxWidth(),
                         shape = RoundedCornerShape(12.dp)
@@ -608,5 +730,113 @@ fun MediaPreviewCard(
                 }
             }
         }
+    }
+
+    // Dialog Ganti Nama Berkas (Rename File Dialog)
+    if (showRenameDialog) {
+        AlertDialog(
+            onDismissRequest = { showRenameDialog = false },
+            icon = { Icon(Icons.Default.DriveFileRenameOutline, contentDescription = null, tint = TikTokPink) },
+            title = { Text("Beri Nama Berkas", fontWeight = FontWeight.Bold) },
+            text = {
+                Column {
+                    Text(
+                        text = "Sesuaikan nama file sebelum diunduh ke galeri:",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Spacer(modifier = Modifier.height(12.dp))
+                    OutlinedTextField(
+                        value = customFileNameInput,
+                        onValueChange = { customFileNameInput = it },
+                        label = { Text("Nama Berkas") },
+                        modifier = Modifier.fillMaxWidth(),
+                        singleLine = true,
+                        shape = RoundedCornerShape(10.dp)
+                    )
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        showRenameDialog = false
+                        val finalName = customFileNameInput.ifBlank { media.title }
+                        if (pendingDownloadType != null) {
+                            onDownloadClick(pendingDownloadType!!, finalName)
+                        } else if (pendingPhotoUrls != null) {
+                            onDownloadSelectedPhotos(pendingPhotoUrls!!, finalName)
+                        }
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = TikTokPink)
+                ) {
+                    Text("Unduh Sekarang")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showRenameDialog = false }) {
+                    Text("Batal")
+                }
+            }
+        )
+    }
+
+    // Dialog Pemilihan Resolusi Video
+    if (showResolutionDialog) {
+        AlertDialog(
+            onDismissRequest = { showResolutionDialog = false },
+            icon = { Icon(Icons.Default.HighQuality, contentDescription = null, tint = TikTokCyan) },
+            title = { Text("Pilih Kualitas Video", fontWeight = FontWeight.Bold) },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    val resolutions = listOf(
+                        "1080p" to "Full HD (Kualitas Tertinggi)",
+                        "720p" to "HD (Standar Jernih)",
+                        "480p" to "SD (Hemat Kuota)",
+                        "360p" to "Low (Ukuran Paling Ringan)"
+                    )
+                    resolutions.forEach { (res, label) ->
+                        val isSelected = media.selectedQuality.startsWith(res)
+                        Surface(
+                            shape = RoundedCornerShape(10.dp),
+                            color = if (isSelected) TikTokCyan.copy(alpha = 0.15f) else MaterialTheme.colorScheme.surface,
+                            border = BorderStroke(
+                                width = if (isSelected) 1.5.dp else 0.5.dp,
+                                color = if (isSelected) TikTokCyan else MaterialTheme.colorScheme.outlineVariant
+                            ),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable {
+                                    showResolutionDialog = false
+                                    onChangeResolution(res)
+                                }
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                RadioButton(
+                                    selected = isSelected,
+                                    onClick = {
+                                        showResolutionDialog = false
+                                        onChangeResolution(res)
+                                    }
+                                )
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Column {
+                                    Text(text = res, fontWeight = FontWeight.Bold)
+                                    Text(text = label, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                }
+                            }
+                        }
+                    }
+                }
+            },
+            confirmButton = {},
+            dismissButton = {
+                TextButton(onClick = { showResolutionDialog = false }) {
+                    Text("Tutup")
+                }
+            }
+        )
     }
 }

@@ -1,5 +1,7 @@
 package com.libretok.downloader.ui.screens
 
+import android.content.Intent
+import android.net.Uri
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -16,6 +18,7 @@ import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.PhotoLibrary
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.SystemUpdate
 import androidx.compose.material.icons.outlined.Download
 import androidx.compose.material.icons.outlined.Home
 import androidx.compose.material.icons.outlined.Settings
@@ -25,6 +28,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -35,6 +39,7 @@ import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import com.libretok.downloader.data.model.DownloadType
 import com.libretok.downloader.ui.components.VideoPlayerDialog
+import com.libretok.downloader.ui.theme.TikTokCyan
 import com.libretok.downloader.ui.theme.TikTokPink
 import com.libretok.downloader.ui.viewmodel.MainViewModel
 import kotlinx.coroutines.delay
@@ -56,12 +61,14 @@ fun MainScreen(
     viewModel: MainViewModel,
     modifier: Modifier = Modifier
 ) {
+    val context = LocalContext.current
     val navController = rememberNavController()
     val navBackStackEntry by navController.currentBackStackEntryAsState()
     val currentRoute = navBackStackEntry?.destination?.route
 
     val activePlayerTarget by viewModel.activePlayerTarget.collectAsState()
     val downloadFinishedItem by viewModel.downloadFinishedItem.collectAsState()
+    val updateInfo by viewModel.updateInfo.collectAsState()
 
     // Auto-dismiss bottom popup after 7 seconds
     LaunchedEffect(downloadFinishedItem) {
@@ -240,7 +247,7 @@ fun MainScreen(
                 DownloadsScreen(viewModel = viewModel)
             }
             composable(Screen.Settings.route) {
-                SettingsScreen()
+                SettingsScreen(viewModel = viewModel)
             }
         }
     }
@@ -250,6 +257,75 @@ fun MainScreen(
         VideoPlayerDialog(
             target = target,
             onDismissRequest = { viewModel.closePlayer() }
+        )
+    }
+
+    // In-App Update Dialog
+    updateInfo?.let { update ->
+        AlertDialog(
+            onDismissRequest = { viewModel.dismissUpdateDialog() },
+            icon = {
+                Icon(
+                    imageVector = Icons.Default.SystemUpdate,
+                    contentDescription = null,
+                    tint = TikTokCyan,
+                    modifier = Modifier.size(36.dp)
+                )
+            },
+            title = {
+                Text(
+                    text = "Pembaruan Tersedia!",
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 18.sp
+                )
+            },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(
+                        text = "Versi baru ${update.latestVersion} telah dirilis di GitHub.",
+                        style = MaterialTheme.typography.bodyMedium,
+                        fontWeight = FontWeight.Medium
+                    )
+                    if (update.changelog.isNotBlank()) {
+                        Surface(
+                            shape = RoundedCornerShape(8.dp),
+                            color = MaterialTheme.colorScheme.surfaceVariant,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .heightIn(max = 140.dp)
+                        ) {
+                            Text(
+                                text = update.changelog,
+                                style = MaterialTheme.typography.bodySmall,
+                                modifier = Modifier.padding(10.dp)
+                            )
+                        }
+                    }
+                    Text(
+                        text = "Apakah Anda ingin mengunduh pembaruan sekarang?",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        val downloadUrl = update.downloadUrl.ifBlank { update.releasePageUrl }
+                        val intent = Intent(Intent.ACTION_VIEW, Uri.parse(downloadUrl))
+                        context.startActivity(intent)
+                        viewModel.dismissUpdateDialog()
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = TikTokCyan)
+                ) {
+                    Text("Update Sekarang", color = Color.Black, fontWeight = FontWeight.Bold)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { viewModel.dismissUpdateDialog() }) {
+                    Text("Nanti Saja")
+                }
+            }
         )
     }
 }

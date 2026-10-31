@@ -94,17 +94,18 @@ class TikTokApiService(
     /**
      * Fetches metadata & download links for TikTok, Instagram, YouTube, Facebook, etc.
      */
-    suspend fun fetchMedia(url: String): Result<TikTokMedia> = withContext(Dispatchers.IO) {
+    suspend fun fetchMedia(url: String, quality: String = "1080p"): Result<TikTokMedia> = withContext(Dispatchers.IO) {
         val cleanUrl = extractUrl(url) ?: sanitizeUrl(url)
         val platform = detectPlatform(cleanUrl)
+        val cleanQuality = quality.replace("p", "").ifBlank { "1080" }
 
         if (platform == "TikTok") {
-            val tikWmResult = fetchTikWm(cleanUrl)
+            val tikWmResult = fetchTikWm(cleanUrl, cleanQuality)
             if (tikWmResult.isSuccess) {
                 return@withContext tikWmResult
             }
             // Fallback to Cobalt if TikWM fails
-            val cobaltResult = fetchCobalt(cleanUrl, platform)
+            val cobaltResult = fetchCobalt(cleanUrl, platform, cleanQuality)
             if (cobaltResult.isSuccess) {
                 return@withContext cobaltResult
             }
@@ -113,7 +114,7 @@ class TikTokApiService(
             )
         } else {
             // Instagram, YouTube, Facebook, etc.
-            val cobaltResult = fetchCobalt(cleanUrl, platform)
+            val cobaltResult = fetchCobalt(cleanUrl, platform, cleanQuality)
             if (cobaltResult.isSuccess) {
                 return@withContext cobaltResult
             }
@@ -129,10 +130,11 @@ class TikTokApiService(
         }
     }
 
-    private suspend fun fetchTikWm(cleanUrl: String): Result<TikTokMedia> = withContext(Dispatchers.IO) {
+    private suspend fun fetchTikWm(cleanUrl: String, quality: String = "1080"): Result<TikTokMedia> = withContext(Dispatchers.IO) {
         try {
             val encodedUrl = URLEncoder.encode(cleanUrl, "UTF-8")
-            val requestUrl = "$TIKWM_API_URL?url=$encodedUrl&hd=1"
+            val isHd = if (quality == "1080" || quality == "720") 1 else 0
+            val requestUrl = "$TIKWM_API_URL?url=$encodedUrl&hd=$isHd"
 
             val request = Request.Builder()
                 .url(requestUrl)
@@ -167,15 +169,16 @@ class TikTokApiService(
             val coverUrl = fixUrl(data.originCover) ?: fixUrl(data.cover) ?: ""
             val avatarUrl = fixUrl(data.author?.avatar) ?: ""
             val imagesList = data.images?.mapNotNull { fixUrl(it) } ?: emptyList()
+            val postTitle = data.title?.ifBlank { "TikTok Media" } ?: "TikTok Media"
 
             val media = TikTokMedia(
                 id = data.id ?: System.currentTimeMillis().toString(),
-                title = data.title?.ifBlank { "TikTok Video" } ?: "TikTok Video",
+                title = postTitle,
                 authorName = data.author?.nickname?.ifBlank { "TikTok Creator" } ?: "TikTok Creator",
                 authorUsername = data.author?.uniqueId ?: "",
                 authorAvatar = avatarUrl,
                 coverUrl = coverUrl,
-                videoUrl = playUrl,
+                videoUrl = if (quality == "1080" && !hdPlayUrl.isNullOrBlank()) hdPlayUrl else playUrl,
                 hdVideoUrl = hdPlayUrl,
                 musicUrl = musicUrl,
                 musicTitle = data.musicInfo?.title ?: "Original Sound",
@@ -184,7 +187,9 @@ class TikTokApiService(
                 isImagesPost = isImages,
                 images = imagesList,
                 originalUrl = cleanUrl,
-                platform = "TikTok"
+                platform = "TikTok",
+                description = postTitle,
+                selectedQuality = "${quality}p"
             )
 
             Result.success(media)
@@ -193,7 +198,7 @@ class TikTokApiService(
         }
     }
 
-    private suspend fun fetchCobalt(cleanUrl: String, platform: String): Result<TikTokMedia> = withContext(Dispatchers.IO) {
+    private suspend fun fetchCobalt(cleanUrl: String, platform: String, quality: String = "1080"): Result<TikTokMedia> = withContext(Dispatchers.IO) {
         var lastError: Exception? = null
 
         // If YouTube, fetch official oEmbed in parallel to get exact channel name, handle, and thumbnail
@@ -203,7 +208,7 @@ class TikTokApiService(
 
         for (endpoint in COBALT_INSTANCES) {
             try {
-                val videoDeferred = async { requestCobalt(endpoint, cleanUrl, isAudio = false) }
+                val videoDeferred = async { requestCobalt(endpoint, cleanUrl, isAudio = false, quality = quality) }
                 val audioDeferred = async { requestCobalt(endpoint, cleanUrl, isAudio = true) }
 
                 val videoResp = videoDeferred.await()
@@ -211,7 +216,7 @@ class TikTokApiService(
 
                 if (videoResp != null && (videoResp.status == "tunnel" || videoResp.status == "redirect" || videoResp.status == "picker")) {
                     val ytOEmbed = youtubeOEmbedDeferred?.await()
-                    val media = mapCobaltToMedia(cleanUrl, platform, videoResp, audioResp, ytOEmbed)
+                    val media = mapCobaltToMedia(cleanUrl, platform, videoResp, audioResp, ytOEmbed, quality)
                     return@withContext Result.success(media)
                 }
 
@@ -244,19 +249,19 @@ class TikTokApiService(
         }
     }
 
-    private fun requestCobalt(endpoint: String, targetUrl: String, isAudio: Boolean): CobaltResponse? {
+    private fun requestCobalt(endpoint: String, targetUrl: String, isAudio: Boolean, quality: String = "1080"): CobaltResponse? {
         return try {
             val payload = if (isAudio) {
                 mapOf("url" to targetUrl, "downloadMode" to "audio")
             } else {
-                mapOf("url" to targetUrl, "videoQuality" to "1080")
+                mapOf("url" to targetUrl, "videoQuality" to quality)
             }
             val jsonString = gson.toJson(payload)
             val request = Request.Builder()
                 .url(endpoint)
                 .header("Accept", "application/json")
                 .header("Content-Type", "application/json")
-                .header("User-Agent", "LibreTok/1.0.1")
+                .header("User-Agent", "LibreTok/1.0.2")
                 .post(jsonString.toRequestBody(JSON_MEDIA_TYPE))
                 .build()
 
@@ -273,7 +278,8 @@ class TikTokApiService(
         platform: String,
         videoResp: CobaltResponse,
         audioResp: CobaltResponse?,
-        ytOEmbed: YouTubeOEmbed?
+        ytOEmbed: YouTubeOEmbed?,
+        quality: String = "1080"
     ): TikTokMedia {
         val ytMatcher = YOUTUBE_ID_PATTERN.matcher(cleanUrl)
         val youtubeId = if (ytMatcher.find()) ytMatcher.group(1) else null
@@ -381,7 +387,9 @@ class TikTokApiService(
             isImagesPost = isImages,
             images = imagesList,
             originalUrl = cleanUrl,
-            platform = platform
+            platform = platform,
+            description = cleanTitle,
+            selectedQuality = "${quality}p"
         )
     }
 }
