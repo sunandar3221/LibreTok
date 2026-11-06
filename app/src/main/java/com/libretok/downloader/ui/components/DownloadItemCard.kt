@@ -22,6 +22,7 @@ import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
 import com.libretok.downloader.data.model.DownloadItem
 import com.libretok.downloader.data.model.DownloadType
+import com.libretok.downloader.ui.localization.LocalAppStrings
 import com.libretok.downloader.ui.theme.TikTokCyan
 import com.libretok.downloader.ui.theme.TikTokPink
 import java.text.SimpleDateFormat
@@ -39,6 +40,7 @@ fun DownloadItemCard(
     onDeleteClick: () -> Unit,
     modifier: Modifier = Modifier
 ) {
+    val strings = LocalAppStrings.current
     var showMenu by remember { mutableStateOf(false) }
 
     val formattedMetadata = remember(item.fileSizeBytes, item.timestamp) {
@@ -166,7 +168,7 @@ fun DownloadItemCard(
                 IconButton(onClick = onShareClick) {
                     Icon(
                         imageVector = Icons.Default.Share,
-                        contentDescription = "Bagikan",
+                        contentDescription = strings.btnShare,
                         tint = MaterialTheme.colorScheme.primary
                     )
                 }
@@ -184,7 +186,7 @@ fun DownloadItemCard(
                         onDismissRequest = { showMenu = false }
                     ) {
                         DropdownMenuItem(
-                            text = { Text("Putar / Buka") },
+                            text = { Text(strings.menuPlay) },
                             leadingIcon = { Icon(Icons.Default.PlayArrow, null) },
                             onClick = {
                                 showMenu = false
@@ -192,7 +194,7 @@ fun DownloadItemCard(
                             }
                         )
                         DropdownMenuItem(
-                            text = { Text("Buka di Galeri / Pemutar HP") },
+                            text = { Text(strings.menuOpenSystem) },
                             leadingIcon = { Icon(Icons.AutoMirrored.Filled.OpenInNew, null) },
                             onClick = {
                                 showMenu = false
@@ -200,7 +202,7 @@ fun DownloadItemCard(
                             }
                         )
                         DropdownMenuItem(
-                            text = { Text("Bagikan Berkas") },
+                            text = { Text(strings.menuShare) },
                             leadingIcon = { Icon(Icons.Default.Share, null) },
                             onClick = {
                                 showMenu = false
@@ -209,7 +211,7 @@ fun DownloadItemCard(
                         )
                         HorizontalDivider()
                         DropdownMenuItem(
-                            text = { Text("Hapus Unduhan", color = MaterialTheme.colorScheme.error) },
+                            text = { Text(strings.menuDelete, color = MaterialTheme.colorScheme.error) },
                             leadingIcon = { Icon(Icons.Default.Delete, null, tint = MaterialTheme.colorScheme.error) },
                             onClick = {
                                 showMenu = false

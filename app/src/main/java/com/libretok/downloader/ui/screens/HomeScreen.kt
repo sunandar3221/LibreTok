@@ -167,12 +167,12 @@ fun HomeScreen(
                         Spacer(modifier = Modifier.width(10.dp))
                         Column(modifier = Modifier.weight(1f)) {
                             Text(
-                                text = "Link Media Terdeteksi!",
+                                text = strings.clipboardDetectedTitle,
                                 fontWeight = FontWeight.Bold,
                                 style = MaterialTheme.typography.titleMedium
                             )
                             Text(
-                                text = "Ingin langsung memeriksa tautan ini?",
+                                text = strings.clipboardDetectedDesc,
                                 style = MaterialTheme.typography.bodyMedium,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
@@ -182,10 +182,10 @@ fun HomeScreen(
                             shape = RoundedCornerShape(10.dp),
                             contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)
                         ) {
-                            Text("Unduh")
+                            Text(strings.btnPaste)
                         }
                         IconButton(onClick = { viewModel.dismissClipboardBanner() }) {
-                            Icon(Icons.Default.Close, contentDescription = "Tutup")
+                            Icon(Icons.Default.Close, contentDescription = strings.btnClose)
                         }
                     }
                 }
@@ -221,7 +221,7 @@ fun HomeScreen(
                                 .clickable { isBatchMode = false }
                         ) {
                             Text(
-                                text = "Link Tunggal",
+                                text = strings.btnSingleLink,
                                 fontWeight = FontWeight.Bold,
                                 fontSize = 13.sp,
                                 color = if (!isBatchMode) Color.White else MaterialTheme.colorScheme.onSurfaceVariant,
@@ -252,7 +252,7 @@ fun HomeScreen(
                                 )
                                 Spacer(modifier = Modifier.width(4.dp))
                                 Text(
-                                    text = "Unduh Massal",
+                                    text = strings.btnBatchDownload,
                                     fontWeight = FontWeight.Bold,
                                     fontSize = 13.sp,
                                     color = if (isBatchMode) Color.Black else MaterialTheme.colorScheme.onSurfaceVariant
@@ -353,7 +353,7 @@ fun HomeScreen(
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .height(130.dp),
-                            placeholder = { Text("Tempel daftar link di sini (satu link per baris)...") },
+                            placeholder = { Text(strings.batchInputHint) },
                             shape = RoundedCornerShape(14.dp),
                             maxLines = 6
                         )
@@ -383,7 +383,7 @@ fun HomeScreen(
                             ) {
                                 Icon(Icons.Default.ContentPaste, contentDescription = null, modifier = Modifier.size(16.dp))
                                 Spacer(modifier = Modifier.width(6.dp))
-                                Text("Tempel Link", fontSize = 12.sp)
+                                Text(strings.btnPasteLink, fontSize = 12.sp)
                             }
 
                             if (batchInputText.isNotBlank()) {
@@ -391,7 +391,7 @@ fun HomeScreen(
                                     onClick = { batchInputText = "" },
                                     shape = RoundedCornerShape(12.dp)
                                 ) {
-                                    Text("Bersihkan", fontSize = 12.sp)
+                                    Text(strings.btnClear, fontSize = 12.sp)
                                 }
                             }
                         }
@@ -416,12 +416,12 @@ fun HomeScreen(
                                     strokeWidth = 2.dp
                                 )
                                 Spacer(modifier = Modifier.width(10.dp))
-                                Text("Sedang Mengunduh Massal...", color = Color.Black, fontWeight = FontWeight.Bold)
+                                Text(strings.batchDownloading, color = Color.Black, fontWeight = FontWeight.Bold)
                             } else {
                                 Icon(Icons.Default.CloudDownload, contentDescription = null, tint = Color.Black)
                                 Spacer(modifier = Modifier.width(8.dp))
                                 Text(
-                                    text = if (extractedUrls.isEmpty()) "Masukkan Minimal 1 Link" else "Unduh Sekaligus (${extractedUrls.size} Link)",
+                                    text = if (extractedUrls.isEmpty()) strings.batchEmptyHint else strings.batchStartButton.format(extractedUrls.size),
                                     color = Color.Black,
                                     fontWeight = FontWeight.Bold
                                 )
@@ -452,18 +452,18 @@ fun HomeScreen(
                             Spacer(modifier = Modifier.width(8.dp))
                             val doneCount = batchQueue.count { it.status == com.libretok.downloader.data.model.BatchItemStatus.SUCCESS }
                             Text(
-                                text = "Antrean Unduhan Massal ($doneCount/${batchQueue.size})",
+                                text = strings.batchQueueTitle.format(doneCount, batchQueue.size),
                                 style = MaterialTheme.typography.titleMedium,
                                 fontWeight = FontWeight.Bold,
                                 modifier = Modifier.weight(1f)
                             )
                             if (isBatchRunning) {
                                 TextButton(onClick = { viewModel.cancelBatchDownload() }) {
-                                    Text("Batalkan", color = MaterialTheme.colorScheme.error, fontSize = 12.sp)
+                                    Text(strings.btnCancel, color = MaterialTheme.colorScheme.error, fontSize = 12.sp)
                                 }
                             } else {
                                 TextButton(onClick = { viewModel.clearBatchQueue() }) {
-                                    Text("Tutup", fontSize = 12.sp)
+                                    Text(strings.btnClose, fontSize = 12.sp)
                                 }
                             }
                         }
@@ -497,11 +497,11 @@ fun HomeScreen(
                                                 overflow = TextOverflow.Ellipsis
                                             )
                                             val statusText = when (item.status) {
-                                                com.libretok.downloader.data.model.BatchItemStatus.WAITING -> "Menunggu antrean..."
-                                                com.libretok.downloader.data.model.BatchItemStatus.FETCHING -> "Memeriksa tautan..."
-                                                com.libretok.downloader.data.model.BatchItemStatus.DOWNLOADING -> "Sedang mengunduh..."
-                                                com.libretok.downloader.data.model.BatchItemStatus.SUCCESS -> "Berhasil disimpan ke Galeri"
-                                                com.libretok.downloader.data.model.BatchItemStatus.FAILED -> item.errorMessage ?: "Gagal"
+                                                com.libretok.downloader.data.model.BatchItemStatus.WAITING -> strings.statusWaiting
+                                                com.libretok.downloader.data.model.BatchItemStatus.FETCHING -> strings.statusChecking
+                                                com.libretok.downloader.data.model.BatchItemStatus.DOWNLOADING -> strings.statusDownloading
+                                                com.libretok.downloader.data.model.BatchItemStatus.SUCCESS -> strings.statusSavedToGallery
+                                                com.libretok.downloader.data.model.BatchItemStatus.FAILED -> item.errorMessage ?: strings.downloadFailed
                                             }
                                             Text(
                                                 text = statusText,
@@ -645,6 +645,7 @@ fun OfflineStateCard(
     onRetry: () -> Unit,
     onGoToDownloads: () -> Unit
 ) {
+    val strings = LocalAppStrings.current
     Card(
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(20.dp),
@@ -676,14 +677,14 @@ fun OfflineStateCard(
             }
 
             Text(
-                text = "Tidak Ada Koneksi Internet",
+                text = strings.offlineTitle,
                 style = MaterialTheme.typography.titleLarge,
                 fontWeight = FontWeight.Bold,
                 textAlign = TextAlign.Center
             )
 
             Text(
-                text = "LibreTok memerlukan koneksi internet untuk mengunduh video dan foto baru. Anda tetap dapat memutar semua video & audio yang sudah pernah diunduh secara offline.",
+                text = strings.offlineDesc,
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 textAlign = TextAlign.Center
@@ -702,7 +703,7 @@ fun OfflineStateCard(
                     modifier = Modifier.size(18.dp)
                 )
                 Spacer(modifier = Modifier.width(8.dp))
-                Text("Coba Hubungkan Lagi", color = Color.Black, fontWeight = FontWeight.Bold)
+                Text(strings.btnRetryConnection, color = Color.Black, fontWeight = FontWeight.Bold)
             }
 
             HorizontalDivider(
@@ -739,12 +740,12 @@ fun OfflineStateCard(
                     Spacer(modifier = Modifier.width(12.dp))
                     Column(modifier = Modifier.weight(1f)) {
                         Text(
-                            text = "Buka Riwayat Unduhan (Offline)",
+                            text = strings.offlineHistoryBtn,
                             fontWeight = FontWeight.Bold,
                             style = MaterialTheme.typography.titleSmall
                         )
                         Text(
-                            text = if (offlineMediaCount > 0) "$offlineMediaCount berkas tersimpan siap diputar tanpa kuota" else "Buka galeri unduhan Anda",
+                            text = if (offlineMediaCount > 0) "$offlineMediaCount ${strings.filterPhotos}" else strings.emptyHistoryDesc,
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )

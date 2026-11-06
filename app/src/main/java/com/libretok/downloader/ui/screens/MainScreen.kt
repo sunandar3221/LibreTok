@@ -293,7 +293,7 @@ fun MainScreen(
             },
             title = {
                 Text(
-                    text = "Pembaruan Tersedia!",
+                    text = strings.updateAvailableTitle,
                     fontWeight = FontWeight.Bold,
                     fontSize = 18.sp
                 )
@@ -301,7 +301,7 @@ fun MainScreen(
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text(
-                        text = "Versi baru ${update.latestVersion} telah dirilis di GitHub.",
+                        text = strings.updateNewVersionDesc.format(update.latestVersion),
                         style = MaterialTheme.typography.bodyMedium,
                         fontWeight = FontWeight.Medium
                     )
@@ -321,7 +321,7 @@ fun MainScreen(
                         }
                     }
                     Text(
-                        text = "Apakah Anda ingin mengunduh pembaruan sekarang?",
+                        text = strings.updatePrompt,
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -337,12 +337,12 @@ fun MainScreen(
                     },
                     colors = ButtonDefaults.buttonColors(containerColor = TikTokCyan)
                 ) {
-                    Text("Update Sekarang", color = Color.Black, fontWeight = FontWeight.Bold)
+                    Text(strings.btnUpdateNow, color = Color.Black, fontWeight = FontWeight.Bold)
                 }
             },
             dismissButton = {
                 TextButton(onClick = { viewModel.dismissUpdateDialog() }) {
-                    Text("Nanti Saja")
+                    Text(strings.btnLater)
                 }
             }
         )

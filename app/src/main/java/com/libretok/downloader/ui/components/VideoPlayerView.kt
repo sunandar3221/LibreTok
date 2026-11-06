@@ -27,6 +27,7 @@ import androidx.media3.common.util.UnstableApi
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.ui.PlayerView
 import com.libretok.downloader.data.model.DownloadType
+import com.libretok.downloader.ui.localization.LocalAppStrings
 import com.libretok.downloader.ui.viewmodel.PlayerTarget
 import java.io.File
 
@@ -37,6 +38,7 @@ fun VideoPlayerDialog(
     onDismissRequest: () -> Unit
 ) {
     val context = LocalContext.current
+    val strings = LocalAppStrings.current
 
     val title: String
     val mediaUri: Uri?
@@ -124,7 +126,7 @@ fun VideoPlayerDialog(
                     ) {
                         Icon(
                             imageVector = Icons.Default.Close,
-                            contentDescription = "Tutup",
+                            contentDescription = strings.btnClose,
                             tint = Color.White,
                             modifier = Modifier.size(20.dp)
                         )

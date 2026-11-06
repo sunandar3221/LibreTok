@@ -301,7 +301,7 @@ fun SettingsScreen(
                             } else {
                                 Icon(
                                     imageVector = Icons.Default.Refresh,
-                                    contentDescription = "Cek",
+                                    contentDescription = strings.checkUpdateTitle,
                                     tint = MaterialTheme.colorScheme.primary,
                                     modifier = Modifier.size(20.dp)
                                 )
@@ -333,7 +333,7 @@ fun SettingsScreen(
                             icon = Icons.Default.Person,
                             title = strings.devName,
                             value = "sunandar3221",
-                            actionHint = "Kunjungi Profil",
+                            actionHint = strings.visitProfile,
                             onClick = { openUrl("https://github.com/sunandar3221") }
                         )
                         HorizontalDivider(modifier = Modifier.padding(vertical = 12.dp))
@@ -341,7 +341,7 @@ fun SettingsScreen(
                             icon = Icons.Default.Code,
                             title = strings.githubRepo,
                             value = "github.com/sunandar3221/LibreTok",
-                            actionHint = "Buka Repo",
+                            actionHint = strings.openRepo,
                             onClick = { openUrl("https://github.com/sunandar3221/LibreTok") }
                         )
                         HorizontalDivider(modifier = Modifier.padding(vertical = 12.dp))
@@ -349,7 +349,7 @@ fun SettingsScreen(
                             icon = Icons.Default.Gavel,
                             title = strings.appLicense,
                             value = "GNU General Public License v3.0 (GPLv3)",
-                            actionHint = "Lihat Lisensi",
+                            actionHint = strings.viewLicense,
                             onClick = { openUrl("https://www.gnu.org/licenses/gpl-3.0.html") }
                         )
                     }
@@ -377,25 +377,25 @@ fun SettingsScreen(
                         FeatureHighlightRow(
                             icon = Icons.Default.PlayCircle,
                             title = "TikTok",
-                            desc = "Video No Watermark (SD & HD), Audio MP3, dan Foto Slideshow"
+                            desc = strings.platformTikTokDesc
                         )
                         HorizontalDivider(modifier = Modifier.padding(vertical = 10.dp))
                         FeatureHighlightRow(
                             icon = Icons.Default.CameraAlt,
                             title = "Instagram",
-                            desc = "Reels, Video Post, Audio MP3, dan Carousel"
+                            desc = strings.platformInstagramDesc
                         )
                         HorizontalDivider(modifier = Modifier.padding(vertical = 10.dp))
                         FeatureHighlightRow(
                             icon = Icons.Default.Subscriptions,
                             title = "YouTube",
-                            desc = "Video Standar & HD, YouTube Shorts, serta Ekstrak MP3"
+                            desc = strings.platformYouTubeDesc
                         )
                         HorizontalDivider(modifier = Modifier.padding(vertical = 10.dp))
                         FeatureHighlightRow(
                             icon = Icons.Default.ThumbUp,
                             title = "Facebook",
-                            desc = "Facebook Watch, Reels, Video Publik, dan Audio MP3"
+                            desc = strings.platformFacebookDesc
                         )
                     }
                 }
@@ -404,7 +404,7 @@ fun SettingsScreen(
             // Storage Details
             item {
                 Text(
-                    text = "Penyimpanan",
+                    text = strings.sectionStorage,
                     style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.Bold
                 )
@@ -421,20 +421,20 @@ fun SettingsScreen(
                     Column(modifier = Modifier.padding(16.dp)) {
                         SettingsInfoRow(
                             icon = Icons.Default.Movie,
-                            title = "Folder Video",
-                            value = "Penyimpanan Utama > Movies > LibreTok"
+                            title = strings.folderVideo,
+                            value = "Movies > LibreTok"
                         )
                         HorizontalDivider(modifier = Modifier.padding(vertical = 12.dp))
                         SettingsInfoRow(
                             icon = Icons.Default.MusicNote,
-                            title = "Folder Audio MP3",
-                            value = "Penyimpanan Utama > Music > LibreTok"
+                            title = strings.folderAudio,
+                            value = "Music > LibreTok"
                         )
                         HorizontalDivider(modifier = Modifier.padding(vertical = 12.dp))
                         SettingsInfoRow(
                             icon = Icons.Default.PhotoLibrary,
-                            title = "Folder Foto",
-                            value = "Penyimpanan Utama > Pictures > LibreTok"
+                            title = strings.folderPhoto,
+                            value = "Pictures > LibreTok"
                         )
                     }
                 }
@@ -443,7 +443,7 @@ fun SettingsScreen(
             // About App
             item {
                 Text(
-                    text = "Tentang Aplikasi",
+                    text = strings.sectionAbout,
                     style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.Bold
                 )
@@ -537,15 +537,15 @@ fun SettingsScreen(
     // Dialog Pemilihan Default Resolution
     if (showResolutionPicker) {
         val resolutionOptions = listOf(
-            "1080p" to "1080p (Full HD - Rekomendasi)",
-            "720p" to "720p (HD Standar)",
-            "480p" to "480p (Hemat Kuota)",
-            "360p" to "360p (Ukuran Terkecil)"
+            "1080p" to "1080p (Full HD)",
+            "720p" to "720p (HD)",
+            "480p" to "480p (SD)",
+            "360p" to "360p (Low)"
         )
         AlertDialog(
             onDismissRequest = { showResolutionPicker = false },
             title = {
-                Text("Pilih Kualitas Video Default", fontWeight = FontWeight.Bold)
+                Text(strings.dialogSelectQuality, fontWeight = FontWeight.Bold)
             },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {

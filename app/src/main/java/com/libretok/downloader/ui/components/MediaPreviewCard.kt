@@ -254,7 +254,7 @@ fun MediaPreviewCard(
                     Box(contentAlignment = Alignment.Center) {
                         Icon(
                             imageVector = Icons.Default.PlayArrow,
-                            contentDescription = "Preview",
+                            contentDescription = strings.btnPlayPreview,
                             tint = Color.White,
                             modifier = Modifier.size(32.dp)
                         )
@@ -451,13 +451,13 @@ fun MediaPreviewCard(
                                 Spacer(modifier = Modifier.width(8.dp))
                                 Column(modifier = Modifier.weight(1f)) {
                                     val typeLabel = when (download.type) {
-                                        DownloadType.VIDEO -> "Video (No Watermark)"
-                                        DownloadType.HD_VIDEO -> "Video Full HD"
-                                        DownloadType.AUDIO -> "Audio MP3"
-                                        DownloadType.PHOTO -> "Foto"
+                                        DownloadType.VIDEO -> strings.typeVideo
+                                        DownloadType.HD_VIDEO -> strings.typeHdVideo
+                                        DownloadType.AUDIO -> strings.typeAudio
+                                        DownloadType.PHOTO -> strings.typePhoto
                                     }
                                     Text(
-                                        text = "Sedang Mengunduh: $typeLabel",
+                                        text = strings.downloadingStatus.format(typeLabel),
                                         fontWeight = FontWeight.Bold,
                                         fontSize = 13.sp,
                                         color = MaterialTheme.colorScheme.onSurface
@@ -481,7 +481,7 @@ fun MediaPreviewCard(
                                 ) {
                                     Icon(
                                         imageVector = Icons.Default.Close,
-                                        contentDescription = "Batalkan",
+                                        contentDescription = strings.btnCancel,
                                         tint = MaterialTheme.colorScheme.error,
                                         modifier = Modifier.size(18.dp)
                                     )
@@ -528,7 +528,7 @@ fun MediaPreviewCard(
                             )
                             Spacer(modifier = Modifier.width(6.dp))
                             Text(
-                                text = "Pilih Foto (${selectedPhotoIndices.size}/${media.images.size})",
+                                text = strings.btnSelectPhotos.format(selectedPhotoIndices.size, media.images.size),
                                 style = MaterialTheme.typography.titleSmall,
                                 fontWeight = FontWeight.Bold
                             )
@@ -544,7 +544,7 @@ fun MediaPreviewCard(
                                 contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp)
                             ) {
                                 Text(
-                                    text = if (selectedPhotoIndices.size == media.images.size) "Batal Pilih" else "Pilih Semua",
+                                    text = if (selectedPhotoIndices.size == media.images.size) strings.btnDeselectAll else strings.btnSelectAll,
                                     fontSize = 12.sp,
                                     fontWeight = FontWeight.SemiBold,
                                     color = TikTokPink
@@ -802,11 +802,11 @@ fun MediaPreviewCard(
                                 strokeWidth = 2.dp
                             )
                             Spacer(modifier = Modifier.width(8.dp))
-                            Text("Sedang Mengunduh Foto...", fontWeight = FontWeight.Bold)
+                            Text("${strings.btnDownloadPhotos}...", fontWeight = FontWeight.Bold)
                         } else {
                             Icon(imageVector = Icons.Default.PhotoLibrary, contentDescription = null)
                             Spacer(modifier = Modifier.width(8.dp))
-                            Text("Download Foto Postingan", fontWeight = FontWeight.Bold)
+                            Text(strings.btnDownloadPhotos, fontWeight = FontWeight.Bold)
                         }
                     }
                 }
