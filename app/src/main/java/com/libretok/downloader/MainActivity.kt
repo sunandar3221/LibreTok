@@ -18,7 +18,13 @@ import kotlinx.coroutines.launch
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
+import com.libretok.downloader.ui.localization.AppLanguageProvider
+import com.libretok.downloader.ui.localization.LocalAppStrings
 import com.libretok.downloader.ui.screens.MainScreen
 import com.libretok.downloader.ui.theme.LibreTokTheme
 import com.libretok.downloader.ui.viewmodel.MainViewModel
@@ -58,12 +64,19 @@ class MainActivity : ComponentActivity() {
         handleIncomingIntent(intent)
 
         setContent {
-            LibreTokTheme {
-                Surface(
-                    modifier = Modifier.fillMaxSize(),
-                    color = MaterialTheme.colorScheme.background
-                ) {
-                    MainScreen(viewModel = viewModel)
+            val appLanguage by viewModel.appLanguage.collectAsState()
+            val strings = remember(appLanguage) {
+                AppLanguageProvider.getStrings(appLanguage)
+            }
+
+            CompositionLocalProvider(LocalAppStrings provides strings) {
+                LibreTokTheme {
+                    Surface(
+                        modifier = Modifier.fillMaxSize(),
+                        color = MaterialTheme.colorScheme.background
+                    ) {
+                        MainScreen(viewModel = viewModel)
+                    }
                 }
             }
         }

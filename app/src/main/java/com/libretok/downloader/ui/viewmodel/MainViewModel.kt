@@ -40,6 +40,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val historyRepository = HistoryRepository(application)
     val downloadManager = DownloadManager(application, historyRepository)
     val settingsManager = SettingsManager(application)
+    val appLanguage: StateFlow<String> = settingsManager.appLanguage
+    fun setAppLanguage(lang: String) = settingsManager.setAppLanguage(lang)
     private val updateChecker = UpdateChecker()
     val networkMonitor = NetworkMonitor(application)
 

@@ -36,6 +36,7 @@ import com.libretok.downloader.data.model.ActiveDownload
 import com.libretok.downloader.data.model.DownloadStatus
 import com.libretok.downloader.data.model.DownloadType
 import com.libretok.downloader.data.model.TikTokMedia
+import com.libretok.downloader.ui.localization.LocalAppStrings
 import com.libretok.downloader.ui.theme.TikTokCyan
 import com.libretok.downloader.ui.theme.TikTokPink
 import kotlinx.coroutines.delay
@@ -55,6 +56,7 @@ fun MediaPreviewCard(
     onPreviewClick: () -> Unit,
     modifier: Modifier = Modifier
 ) {
+    val strings = LocalAppStrings.current
     val clipboardManager = LocalClipboardManager.current
     var isCaptionCopied by remember { mutableStateOf(false) }
 
@@ -314,13 +316,13 @@ fun MediaPreviewCard(
                 ) {
                     Icon(
                         imageVector = if (isCaptionCopied) Icons.Default.Check else Icons.Default.ContentCopy,
-                        contentDescription = "Salin Caption",
+                        contentDescription = strings.btnCopyCaption,
                         tint = if (isCaptionCopied) Color(0xFF00E676) else MaterialTheme.colorScheme.primary,
                         modifier = Modifier.size(15.dp)
                     )
                     Spacer(modifier = Modifier.width(4.dp))
                     Text(
-                        text = if (isCaptionCopied) "Disalin!" else "Salin",
+                        text = if (isCaptionCopied) strings.captionCopied else strings.btnCopyCaption,
                         fontSize = 11.sp,
                         fontWeight = FontWeight.Bold,
                         color = if (isCaptionCopied) Color(0xFF00E676) else MaterialTheme.colorScheme.primary
@@ -343,7 +345,7 @@ fun MediaPreviewCard(
                     )
                     Spacer(modifier = Modifier.width(6.dp))
                     Text(
-                        text = "Kualitas:",
+                        text = "${strings.qualityLabel}:",
                         style = MaterialTheme.typography.bodySmall,
                         fontWeight = FontWeight.Medium
                     )
@@ -359,7 +361,7 @@ fun MediaPreviewCard(
                         trailingIcon = {
                             Icon(
                                 imageVector = Icons.Default.ArrowDropDown,
-                                contentDescription = "Ubah Resolusi",
+                                contentDescription = strings.dialogSelectQuality,
                                 modifier = Modifier.size(16.dp)
                             )
                         },
@@ -386,7 +388,7 @@ fun MediaPreviewCard(
                     )
                     Spacer(modifier = Modifier.width(6.dp))
                     Text(
-                        text = "Audio:",
+                        text = "${strings.audioLabel}:",
                         style = MaterialTheme.typography.bodySmall,
                         fontWeight = FontWeight.Medium
                     )
@@ -396,7 +398,7 @@ fun MediaPreviewCard(
                         onClick = { showAudioTrackDialog = true },
                         label = {
                             Text(
-                                text = selectedTrack?.displayName ?: "Suara Asli",
+                                text = selectedTrack?.displayName ?: strings.originalAudioBadge,
                                 fontWeight = FontWeight.Bold,
                                 maxLines = 1,
                                 overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
@@ -405,7 +407,7 @@ fun MediaPreviewCard(
                         trailingIcon = {
                             Icon(
                                 imageVector = Icons.Default.ArrowDropDown,
-                                contentDescription = "Pilih Audio / Dubbing",
+                                contentDescription = strings.dialogSelectAudio,
                                 modifier = Modifier.size(16.dp)
                             )
                         },
@@ -663,14 +665,14 @@ fun MediaPreviewCard(
                             )
                             Spacer(modifier = Modifier.width(8.dp))
                             Text(
-                                text = "Sedang Mengunduh (${(currentActiveDownload!!.progress * 100).toInt()}%)...",
+                                text = "${strings.btnDownloadVideo} (${(currentActiveDownload!!.progress * 100).toInt()}%)...",
                                 fontWeight = FontWeight.Bold
                             )
                         } else {
                             Icon(imageVector = Icons.Default.FileDownload, contentDescription = null)
                             Spacer(modifier = Modifier.width(8.dp))
                             Text(
-                                text = "Download Video (No Watermark)",
+                                text = strings.btnDownloadVideo,
                                 fontWeight = FontWeight.Bold
                             )
                         }
@@ -696,14 +698,14 @@ fun MediaPreviewCard(
                             )
                             Spacer(modifier = Modifier.width(8.dp))
                             Text(
-                                text = "Sedang Mengunduh HD (${(currentActiveDownload!!.progress * 100).toInt()}%)...",
+                                text = "${strings.btnDownloadVideo} HD (${(currentActiveDownload!!.progress * 100).toInt()}%)...",
                                 fontWeight = FontWeight.Bold
                             )
                         } else {
                             Icon(imageVector = Icons.Default.HighQuality, contentDescription = null)
                             Spacer(modifier = Modifier.width(8.dp))
                             Text(
-                                text = "Download Video Full HD",
+                                text = "${strings.btnDownloadVideo} (Full HD)",
                                 fontWeight = FontWeight.SemiBold
                             )
                         }
@@ -714,9 +716,9 @@ fun MediaPreviewCard(
                 if (media.images.isNotEmpty()) {
                     val count = selectedPhotoIndices.size
                     val buttonLabel = when {
-                        count == 0 -> "Pilih Foto Terlebih Dahulu"
-                        count == media.images.size -> "Download Semua Foto ($count Foto)"
-                        else -> "Download Foto Terpilih ($count Foto)"
+                        count == 0 -> strings.btnDownloadPhotos
+                        count == media.images.size -> "${strings.btnDownloadPhotos} ($count)"
+                        else -> "${strings.btnDownloadPhotos} ($count)"
                     }
 
                     Button(
@@ -739,7 +741,7 @@ fun MediaPreviewCard(
                             )
                             Spacer(modifier = Modifier.width(8.dp))
                             Text(
-                                text = "Sedang Mengunduh Foto...",
+                                text = "${strings.btnDownloadPhotos}...",
                                 fontWeight = FontWeight.Bold
                             )
                         } else {
@@ -768,14 +770,14 @@ fun MediaPreviewCard(
                             )
                             Spacer(modifier = Modifier.width(8.dp))
                             Text(
-                                text = "Sedang Mengunduh MP3 (${(currentActiveDownload!!.progress * 100).toInt()}%)...",
+                                text = "${strings.btnDownloadAudio} (${(currentActiveDownload!!.progress * 100).toInt()}%)...",
                                 fontWeight = FontWeight.Bold
                             )
                         } else {
                             Icon(imageVector = Icons.Default.MusicNote, contentDescription = null)
                             Spacer(modifier = Modifier.width(8.dp))
                             Text(
-                                text = "Download Audio (MP3)",
+                                text = strings.btnDownloadAudio,
                                 fontWeight = FontWeight.Medium
                             )
                         }
@@ -817,11 +819,11 @@ fun MediaPreviewCard(
         AlertDialog(
             onDismissRequest = { showRenameDialog = false },
             icon = { Icon(Icons.Default.DriveFileRenameOutline, contentDescription = null, tint = TikTokPink) },
-            title = { Text("Beri Nama Berkas", fontWeight = FontWeight.Bold) },
+            title = { Text(strings.renameDialogTitle, fontWeight = FontWeight.Bold) },
             text = {
                 Column {
                     Text(
-                        text = "Sesuaikan nama file sebelum diunduh ke galeri:",
+                        text = strings.renameDialogHint,
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -829,7 +831,7 @@ fun MediaPreviewCard(
                     OutlinedTextField(
                         value = customFileNameInput,
                         onValueChange = { customFileNameInput = it },
-                        label = { Text("Nama Berkas") },
+                        label = { Text(strings.renameDialogTitle) },
                         modifier = Modifier.fillMaxWidth(),
                         singleLine = true,
                         shape = RoundedCornerShape(10.dp)
@@ -849,12 +851,12 @@ fun MediaPreviewCard(
                     },
                     colors = ButtonDefaults.buttonColors(containerColor = TikTokPink)
                 ) {
-                    Text("Unduh Sekarang")
+                    Text(strings.btnSave)
                 }
             },
             dismissButton = {
                 TextButton(onClick = { showRenameDialog = false }) {
-                    Text("Batal")
+                    Text(strings.btnCancel)
                 }
             }
         )
@@ -865,14 +867,14 @@ fun MediaPreviewCard(
         AlertDialog(
             onDismissRequest = { showResolutionDialog = false },
             icon = { Icon(Icons.Default.HighQuality, contentDescription = null, tint = TikTokCyan) },
-            title = { Text("Pilih Kualitas Video", fontWeight = FontWeight.Bold) },
+            title = { Text(strings.dialogSelectQuality, fontWeight = FontWeight.Bold) },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     val resolutions = listOf(
-                        "1080p" to "Full HD (Kualitas Tertinggi)",
-                        "720p" to "HD (Standar Jernih)",
-                        "480p" to "SD (Hemat Kuota)",
-                        "360p" to "Low (Ukuran Paling Ringan)"
+                        "1080p" to "Full HD",
+                        "720p" to "HD",
+                        "480p" to "SD",
+                        "360p" to "Low"
                     )
                     resolutions.forEach { (res, label) ->
                         val isSelected = media.selectedQuality.startsWith(res)
@@ -914,7 +916,7 @@ fun MediaPreviewCard(
             confirmButton = {},
             dismissButton = {
                 TextButton(onClick = { showResolutionDialog = false }) {
-                    Text("Tutup")
+                    Text(strings.btnClose)
                 }
             }
         )
@@ -925,7 +927,7 @@ fun MediaPreviewCard(
         AlertDialog(
             onDismissRequest = { showAudioTrackDialog = false },
             icon = { Icon(Icons.Default.RecordVoiceOver, contentDescription = null, tint = TikTokPink) },
-            title = { Text("Pilih Audio / Dubbing", fontWeight = FontWeight.Bold) },
+            title = { Text(strings.dialogSelectAudio, fontWeight = FontWeight.Bold) },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     media.availableAudioTracks.forEach { track ->
@@ -960,9 +962,9 @@ fun MediaPreviewCard(
                                 Column {
                                     Text(text = track.displayName, fontWeight = FontWeight.Bold)
                                     val desc = when {
-                                        track.isOriginal -> "Suara asli bawaan video (Bukan AI)"
-                                        track.isAutoDubbed -> "Alih suara otomatis oleh AI YouTube"
-                                        else -> "Trek audio alternatif"
+                                        track.isOriginal -> strings.originalAudioBadge
+                                        track.isAutoDubbed -> strings.aiDubbedAudioBadge
+                                        else -> strings.altAudioBadge
                                     }
                                     Text(
                                         text = desc,
@@ -978,7 +980,7 @@ fun MediaPreviewCard(
             confirmButton = {},
             dismissButton = {
                 TextButton(onClick = { showAudioTrackDialog = false }) {
-                    Text("Tutup")
+                    Text(strings.btnClose)
                 }
             }
         )

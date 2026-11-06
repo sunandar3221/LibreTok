@@ -39,6 +39,7 @@ import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import com.libretok.downloader.data.model.DownloadType
 import com.libretok.downloader.ui.components.VideoPlayerDialog
+import com.libretok.downloader.ui.localization.LocalAppStrings
 import com.libretok.downloader.ui.theme.TikTokCyan
 import com.libretok.downloader.ui.theme.TikTokPink
 import com.libretok.downloader.ui.viewmodel.MainViewModel
@@ -62,6 +63,7 @@ fun MainScreen(
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
+    val strings = LocalAppStrings.current
     val navController = rememberNavController()
     val navBackStackEntry by navController.currentBackStackEntryAsState()
     val currentRoute = navBackStackEntry?.destination?.route
@@ -121,13 +123,13 @@ fun MainScreen(
                                     Spacer(modifier = Modifier.width(10.dp))
                                     Column(modifier = Modifier.weight(1f)) {
                                         Text(
-                                            text = "Download Selesai!",
+                                            text = strings.downloadCompleted,
                                             style = MaterialTheme.typography.titleSmall,
                                             fontWeight = FontWeight.Bold,
                                             color = MaterialTheme.colorScheme.onSurfaceVariant
                                         )
                                         Text(
-                                            text = item.title.ifBlank { "Berkas telah disimpan" },
+                                            text = item.title.ifBlank { "Media" },
                                             style = MaterialTheme.typography.bodySmall,
                                             maxLines = 1,
                                             overflow = TextOverflow.Ellipsis,
@@ -140,7 +142,7 @@ fun MainScreen(
                                     ) {
                                         Icon(
                                             imageVector = Icons.Default.Close,
-                                            contentDescription = "Tutup",
+                                            contentDescription = strings.btnClose,
                                             tint = MaterialTheme.colorScheme.onSurfaceVariant,
                                             modifier = Modifier.size(16.dp)
                                         )
@@ -167,10 +169,9 @@ fun MainScreen(
                                         } else {
                                             Icons.Default.PhotoLibrary
                                         }
-                                        val label = if (item.type == DownloadType.AUDIO) "Buka Musik" else "Lihat di Galeri"
                                         Icon(imageVector = icon, contentDescription = null, modifier = Modifier.size(16.dp))
                                         Spacer(modifier = Modifier.width(6.dp))
-                                        Text(text = label, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                                        Text(text = strings.btnOpen, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
                                     }
 
                                     Button(
@@ -195,7 +196,7 @@ fun MainScreen(
                                     ) {
                                         Icon(imageVector = Icons.Default.Download, contentDescription = null, modifier = Modifier.size(16.dp))
                                         Spacer(modifier = Modifier.width(6.dp))
-                                        Text(text = "Lihat Unduhan", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                                        Text(text = strings.navHistory, fontSize = 12.sp, fontWeight = FontWeight.Bold)
                                     }
                                 }
                             }
@@ -208,6 +209,11 @@ fun MainScreen(
                 ) {
                     navScreens.forEach { screen ->
                         val selected = currentRoute == screen.route
+                        val navTitle = when (screen) {
+                            Screen.Home -> strings.navHome
+                            Screen.Downloads -> strings.navHistory
+                            Screen.Settings -> strings.navSettings
+                        }
                         NavigationBarItem(
                             selected = selected,
                             onClick = {
@@ -224,10 +230,10 @@ fun MainScreen(
                             icon = {
                                 Icon(
                                     imageVector = if (selected) screen.selectedIcon else screen.unselectedIcon,
-                                    contentDescription = screen.title
+                                    contentDescription = navTitle
                                 )
                             },
-                            label = { Text(screen.title) }
+                            label = { Text(navTitle) }
                         )
                     }
                 }

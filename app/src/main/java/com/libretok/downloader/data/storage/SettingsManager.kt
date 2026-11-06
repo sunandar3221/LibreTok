@@ -20,6 +20,9 @@ class SettingsManager(context: Context) {
     private val _askRenameBeforeDownload = MutableStateFlow(prefs.getBoolean("ask_rename", false))
     val askRenameBeforeDownload: StateFlow<Boolean> = _askRenameBeforeDownload.asStateFlow()
 
+    private val _appLanguage = MutableStateFlow(prefs.getString("app_language", "system") ?: "system")
+    val appLanguage: StateFlow<String> = _appLanguage.asStateFlow()
+
     fun setAutoResolution(enabled: Boolean) {
         prefs.edit().putBoolean("auto_resolution", enabled).apply()
         _isAutoResolution.value = enabled
@@ -33,5 +36,10 @@ class SettingsManager(context: Context) {
     fun setAskRenameBeforeDownload(enabled: Boolean) {
         prefs.edit().putBoolean("ask_rename", enabled).apply()
         _askRenameBeforeDownload.value = enabled
+    }
+
+    fun setAppLanguage(languageCode: String) {
+        prefs.edit().putString("app_language", languageCode).apply()
+        _appLanguage.value = languageCode
     }
 }

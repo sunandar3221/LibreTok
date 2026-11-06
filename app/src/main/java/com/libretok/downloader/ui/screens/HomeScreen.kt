@@ -30,6 +30,7 @@ import androidx.compose.ui.unit.sp
 import com.libretok.downloader.data.model.ActiveDownload
 import com.libretok.downloader.data.model.DownloadStatus
 import com.libretok.downloader.ui.components.MediaPreviewCard
+import com.libretok.downloader.ui.localization.LocalAppStrings
 import com.libretok.downloader.ui.theme.TikTokCyan
 import com.libretok.downloader.ui.theme.TikTokPink
 import com.libretok.downloader.ui.viewmodel.MainViewModel
@@ -43,6 +44,7 @@ fun HomeScreen(
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
+    val strings = LocalAppStrings.current
     val isOnline by viewModel.isOnline.collectAsState()
     val downloadsHistory by viewModel.downloadsHistory.collectAsState()
 
@@ -267,7 +269,7 @@ fun HomeScreen(
                             value = urlInput,
                             onValueChange = { viewModel.onUrlChange(it) },
                             modifier = Modifier.fillMaxWidth(),
-                            placeholder = { Text("Tempel link TikTok, IG, YouTube, atau FB...") },
+                            placeholder = { Text(strings.inputHint) },
                             leadingIcon = {
                                 Icon(Icons.Default.Link, contentDescription = null)
                             },
@@ -275,7 +277,7 @@ fun HomeScreen(
                                 Row(verticalAlignment = Alignment.CenterVertically) {
                                     if (urlInput.isNotBlank()) {
                                         IconButton(onClick = { viewModel.clearUrl() }) {
-                                            Icon(Icons.Default.Clear, contentDescription = "Hapus")
+                                            Icon(Icons.Default.Clear, contentDescription = strings.clearAll)
                                         }
                                     } else {
                                         IconButton(onClick = {
@@ -286,7 +288,7 @@ fun HomeScreen(
                                                 viewModel.fetchMedia(clip)
                                             }
                                         }) {
-                                            Icon(Icons.Default.ContentPaste, contentDescription = "Tempel")
+                                            Icon(Icons.Default.ContentPaste, contentDescription = strings.btnPaste)
                                         }
                                     }
                                 }
@@ -336,11 +338,11 @@ fun HomeScreen(
                                     strokeWidth = 2.dp
                                 )
                                 Spacer(modifier = Modifier.width(10.dp))
-                                Text("Memproses Link...")
+                                Text(strings.btnFetching)
                             } else {
                                 Icon(Icons.Default.Search, contentDescription = null)
                                 Spacer(modifier = Modifier.width(8.dp))
-                                Text("Periksa & Unduh Video", fontWeight = FontWeight.Bold)
+                                Text(strings.btnFetch, fontWeight = FontWeight.Bold)
                             }
                         }
                     } else {
@@ -607,7 +609,7 @@ fun HomeScreen(
             ) {
                 Column(modifier = Modifier.padding(16.dp)) {
                     Text(
-                        text = "Cara Menggunakan LibreTok",
+                        text = strings.howToUse,
                         style = MaterialTheme.typography.titleMedium,
                         fontWeight = FontWeight.Bold
                     )
@@ -615,20 +617,20 @@ fun HomeScreen(
 
                     HowToStepItem(
                         number = "1",
-                        title = "Buka TikTok, IG, YT, atau Facebook",
-                        desc = "Tekan tombol 'Bagikan' (Share) pada video lalu pilih 'Salin Tautan' (Copy Link)."
+                        title = strings.step1Title,
+                        desc = strings.step1Desc
                     )
                     Spacer(modifier = Modifier.height(10.dp))
                     HowToStepItem(
                         number = "2",
-                        title = "Tempel di LibreTok",
-                        desc = "Buka LibreTok, link akan otomatis terdeteksi atau tekan tombol 'Tempel'."
+                        title = strings.step2Title,
+                        desc = strings.step2Desc
                     )
                     Spacer(modifier = Modifier.height(10.dp))
                     HowToStepItem(
                         number = "3",
-                        title = "Unduh Tanpa Watermark!",
-                        desc = "Pilih unduh video tanpa watermark, full HD, atau audio MP3 gratis."
+                        title = strings.step3Title,
+                        desc = strings.step3Desc
                     )
                 }
             }

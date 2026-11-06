@@ -23,6 +23,8 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.libretok.downloader.BuildConfig
+import com.libretok.downloader.ui.localization.AppLanguage
+import com.libretok.downloader.ui.localization.LocalAppStrings
 import com.libretok.downloader.ui.theme.TikTokCyan
 import com.libretok.downloader.ui.theme.TikTokPink
 import com.libretok.downloader.ui.viewmodel.MainViewModel
@@ -34,7 +36,9 @@ fun SettingsScreen(
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
+    val strings = LocalAppStrings.current
 
+    val currentLanguage by viewModel.appLanguage.collectAsState()
     val askRename by viewModel.settingsManager.askRenameBeforeDownload.collectAsState()
     val isAutoResolution by viewModel.settingsManager.isAutoResolution.collectAsState()
     val defaultResolution by viewModel.settingsManager.defaultResolution.collectAsState()
@@ -42,6 +46,7 @@ fun SettingsScreen(
     val isCheckingUpdate by viewModel.isCheckingUpdate.collectAsState()
     val updateCheckMessage by viewModel.updateCheckMessage.collectAsState()
 
+    var showLanguagePicker by remember { mutableStateOf(false) }
     var showResolutionPicker by remember { mutableStateOf(false) }
 
     fun openUrl(url: String) {
@@ -54,7 +59,7 @@ fun SettingsScreen(
             TopAppBar(
                 title = {
                     Text(
-                        text = "Pengaturan & Info",
+                        text = strings.settingsTitle,
                         style = MaterialTheme.typography.titleLarge,
                         fontWeight = FontWeight.Bold
                     )
@@ -98,13 +103,13 @@ fun SettingsScreen(
                             Spacer(modifier = Modifier.width(12.dp))
                             Column {
                                 Text(
-                                    text = "100% Gratis & Open Source",
+                                    text = strings.freeOpenSource,
                                     style = MaterialTheme.typography.titleMedium,
                                     fontWeight = FontWeight.Bold,
                                     color = TikTokPink
                                 )
                                 Text(
-                                    text = "Download video, musik & foto tanpa watermark & iklan",
+                                    text = strings.freeOpenSourceDesc,
                                     style = MaterialTheme.typography.bodyMedium,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
@@ -114,10 +119,39 @@ fun SettingsScreen(
                 }
             }
 
+            // Bahasa Aplikasi (Language)
+            item {
+                Text(
+                    text = strings.sectionLanguage,
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold
+                )
+            }
+
+            item {
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(16.dp),
+                    colors = CardDefaults.cardColors(
+                        containerColor = MaterialTheme.colorScheme.surfaceVariant
+                    )
+                ) {
+                    Column(modifier = Modifier.padding(16.dp)) {
+                        SettingsClickableRow(
+                            icon = Icons.Default.Language,
+                            title = strings.languageTitle,
+                            value = AppLanguage.fromCode(currentLanguage).nativeName + if (currentLanguage == "system") " (${strings.systemDefault})" else "",
+                            actionHint = strings.languageTitle,
+                            onClick = { showLanguagePicker = true }
+                        )
+                    }
+                }
+            }
+
             // Pengaturan Unduhan (Opsi Resolusi & Rename File)
             item {
                 Text(
-                    text = "Preferensi Unduhan",
+                    text = strings.sectionDownloadPref,
                     style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.Bold
                 )
@@ -146,12 +180,12 @@ fun SettingsScreen(
                             Spacer(modifier = Modifier.width(14.dp))
                             Column(modifier = Modifier.weight(1f)) {
                                 Text(
-                                    text = "Tanya Nama Berkas (Rename)",
+                                    text = strings.askRenameTitle,
                                     style = MaterialTheme.typography.titleMedium,
                                     fontWeight = FontWeight.SemiBold
                                 )
                                 Text(
-                                    text = if (askRename) "Konfirmasi nama berkas kustom sebelum mengunduh" else "Langsung unduh dengan judul asli secara otomatis",
+                                    text = strings.askRenameDesc,
                                     style = MaterialTheme.typography.bodySmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
@@ -178,12 +212,12 @@ fun SettingsScreen(
                             Spacer(modifier = Modifier.width(14.dp))
                             Column(modifier = Modifier.weight(1f)) {
                                 Text(
-                                    text = "Pilihan Resolusi Otomatis",
+                                    text = strings.autoResTitle,
                                     style = MaterialTheme.typography.titleMedium,
                                     fontWeight = FontWeight.SemiBold
                                 )
                                 Text(
-                                    text = if (isAutoResolution) "Otomatis mengunduh dengan resolusi default ($defaultResolution)" else "Resolusi manual (dapat diganti langsung di pratinjau)",
+                                    text = strings.autoResDesc,
                                     style = MaterialTheme.typography.bodySmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
@@ -200,9 +234,9 @@ fun SettingsScreen(
                             // Pilihan Default Resolution
                             SettingsClickableRow(
                                 icon = Icons.Default.SettingsSuggest,
-                                title = "Kualitas Video Default",
+                                title = strings.defaultResTitle,
                                 value = "$defaultResolution ${if (defaultResolution == "1080p") "(Full HD)" else if (defaultResolution == "720p") "(HD)" else ""}",
-                                actionHint = "Ubah Kualitas",
+                                actionHint = strings.changeQualityHint,
                                 onClick = { showResolutionPicker = true }
                             )
                         }
@@ -213,7 +247,7 @@ fun SettingsScreen(
             // Pembaruan Aplikasi
             item {
                 Text(
-                    text = "Pembaruan Aplikasi",
+                    text = strings.sectionUpdates,
                     style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.Bold
                 )
@@ -245,15 +279,15 @@ fun SettingsScreen(
                             Spacer(modifier = Modifier.width(14.dp))
                             Column(modifier = Modifier.weight(1f)) {
                                 Text(
-                                    text = "Periksa Pembaruan",
+                                    text = strings.checkUpdateTitle,
                                     style = MaterialTheme.typography.titleMedium,
                                     fontWeight = FontWeight.SemiBold
                                 )
                                 Text(
                                     text = when {
-                                        isCheckingUpdate -> "Memeriksa rilis terbaru di GitHub..."
+                                        isCheckingUpdate -> strings.checkingUpdate
                                         updateCheckMessage != null -> updateCheckMessage!!
-                                        else -> "Tekan untuk memeriksa versi terbaru LibreTok"
+                                        else -> strings.checkUpdateHint
                                     },
                                     style = MaterialTheme.typography.bodySmall,
                                     color = if (updateCheckMessage != null) TikTokCyan else MaterialTheme.colorScheme.onSurfaceVariant
@@ -280,7 +314,7 @@ fun SettingsScreen(
             // Developer & License Info
             item {
                 Text(
-                    text = "Developer & Lisensi",
+                    text = strings.sectionDev,
                     style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.Bold
                 )
@@ -297,7 +331,7 @@ fun SettingsScreen(
                     Column(modifier = Modifier.padding(16.dp)) {
                         SettingsClickableRow(
                             icon = Icons.Default.Person,
-                            title = "Nama Developer",
+                            title = strings.devName,
                             value = "sunandar3221",
                             actionHint = "Kunjungi Profil",
                             onClick = { openUrl("https://github.com/sunandar3221") }
@@ -305,7 +339,7 @@ fun SettingsScreen(
                         HorizontalDivider(modifier = Modifier.padding(vertical = 12.dp))
                         SettingsClickableRow(
                             icon = Icons.Default.Code,
-                            title = "Repositori GitHub",
+                            title = strings.githubRepo,
                             value = "github.com/sunandar3221/LibreTok",
                             actionHint = "Buka Repo",
                             onClick = { openUrl("https://github.com/sunandar3221/LibreTok") }
@@ -313,7 +347,7 @@ fun SettingsScreen(
                         HorizontalDivider(modifier = Modifier.padding(vertical = 12.dp))
                         SettingsClickableRow(
                             icon = Icons.Default.Gavel,
-                            title = "Lisensi Software",
+                            title = strings.appLicense,
                             value = "GNU General Public License v3.0 (GPLv3)",
                             actionHint = "Lihat Lisensi",
                             onClick = { openUrl("https://www.gnu.org/licenses/gpl-3.0.html") }
@@ -325,7 +359,7 @@ fun SettingsScreen(
             // Supported Platforms Card
             item {
                 Text(
-                    text = "Platform yang Didukung",
+                    text = strings.supportedPlatforms,
                     style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.Bold
                 )
@@ -426,13 +460,13 @@ fun SettingsScreen(
                     Column(modifier = Modifier.padding(16.dp)) {
                         SettingsInfoRow(
                             icon = Icons.Default.Info,
-                            title = "Versi Aplikasi",
+                            title = strings.appVersion,
                             value = "LibreTok v${BuildConfig.VERSION_NAME} (Signed Release)"
                         )
                         HorizontalDivider(modifier = Modifier.padding(vertical = 12.dp))
                         SettingsInfoRow(
                             icon = Icons.Default.Android,
-                            title = "Desain UI Framework",
+                            title = strings.uiFramework,
                             value = "Google Jetpack Compose (Material 3 Native)"
                         )
                     }
@@ -443,6 +477,61 @@ fun SettingsScreen(
                 Spacer(modifier = Modifier.height(24.dp))
             }
         }
+    }
+
+    // Dialog Pemilihan Bahasa Aplikasi
+    if (showLanguagePicker) {
+        AlertDialog(
+            onDismissRequest = { showLanguagePicker = false },
+            title = {
+                Text(strings.languageDialogTitle, fontWeight = FontWeight.Bold)
+            },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    AppLanguage.values().forEach { lang ->
+                        val isSelected = currentLanguage == lang.code
+                        Surface(
+                            shape = RoundedCornerShape(10.dp),
+                            color = if (isSelected) TikTokCyan.copy(alpha = 0.2f) else MaterialTheme.colorScheme.surface,
+                            border = androidx.compose.foundation.BorderStroke(
+                                width = 1.dp,
+                                color = if (isSelected) TikTokCyan else MaterialTheme.colorScheme.outline.copy(alpha = 0.2f)
+                            ),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable {
+                                    viewModel.setAppLanguage(lang.code)
+                                    showLanguagePicker = false
+                                }
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(horizontal = 14.dp, vertical = 12.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                RadioButton(
+                                    selected = isSelected,
+                                    onClick = {
+                                        viewModel.setAppLanguage(lang.code)
+                                        showLanguagePicker = false
+                                    }
+                                )
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text(
+                                    text = if (lang == AppLanguage.SYSTEM) "${lang.nativeName} (${strings.systemDefault})" else lang.nativeName,
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal
+                                )
+                            }
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { showLanguagePicker = false }) {
+                    Text(strings.btnClose)
+                }
+            }
+        )
     }
 
     // Dialog Pemilihan Default Resolution
@@ -499,7 +588,7 @@ fun SettingsScreen(
             },
             confirmButton = {
                 TextButton(onClick = { showResolutionPicker = false }) {
-                    Text("Tutup")
+                    Text(strings.btnClose)
                 }
             }
         )

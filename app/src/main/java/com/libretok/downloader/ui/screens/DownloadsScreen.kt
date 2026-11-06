@@ -15,6 +15,7 @@ import androidx.compose.ui.unit.dp
 import com.libretok.downloader.data.model.DownloadItem
 import com.libretok.downloader.data.model.DownloadType
 import com.libretok.downloader.ui.components.DownloadItemCard
+import com.libretok.downloader.ui.localization.LocalAppStrings
 import com.libretok.downloader.ui.viewmodel.HistoryFilter
 import com.libretok.downloader.ui.viewmodel.MainViewModel
 import com.libretok.downloader.ui.viewmodel.PlayerTarget
@@ -25,6 +26,7 @@ fun DownloadsScreen(
     viewModel: MainViewModel,
     modifier: Modifier = Modifier
 ) {
+    val strings = LocalAppStrings.current
     val items by viewModel.downloadsHistory.collectAsState()
     val selectedFilter by viewModel.selectedFilter.collectAsState()
     var showClearConfirmDialog by remember { mutableStateOf(false) }
@@ -43,7 +45,7 @@ fun DownloadsScreen(
             TopAppBar(
                 title = {
                     Text(
-                        text = "Riwayat Unduhan",
+                        text = strings.historyTitle,
                         style = MaterialTheme.typography.titleLarge,
                         fontWeight = FontWeight.Bold
                     )
@@ -51,7 +53,7 @@ fun DownloadsScreen(
                 actions = {
                     if (items.isNotEmpty()) {
                         IconButton(onClick = { showClearConfirmDialog = true }) {
-                            Icon(Icons.Default.DeleteSweep, contentDescription = "Hapus Semua")
+                            Icon(Icons.Default.DeleteSweep, contentDescription = strings.clearAll)
                         }
                     }
                 }
@@ -73,10 +75,10 @@ fun DownloadsScreen(
             ) {
                 items(HistoryFilter.values()) { filter ->
                     val label = when (filter) {
-                        HistoryFilter.ALL -> "Semua (${items.size})"
-                        HistoryFilter.VIDEOS -> "Video (${items.count { it.type == DownloadType.VIDEO || it.type == DownloadType.HD_VIDEO }})"
-                        HistoryFilter.AUDIOS -> "Audio MP3 (${items.count { it.type == DownloadType.AUDIO }})"
-                        HistoryFilter.PHOTOS -> "Foto (${items.count { it.type == DownloadType.PHOTO }})"
+                        HistoryFilter.ALL -> "${strings.filterAll} (${items.size})"
+                        HistoryFilter.VIDEOS -> "${strings.filterVideos} (${items.count { it.type == DownloadType.VIDEO || it.type == DownloadType.HD_VIDEO }})"
+                        HistoryFilter.AUDIOS -> "${strings.filterAudios} (${items.count { it.type == DownloadType.AUDIO }})"
+                        HistoryFilter.PHOTOS -> "${strings.filterPhotos} (${items.count { it.type == DownloadType.PHOTO }})"
                     }
                     FilterChip(
                         selected = selectedFilter == filter,
@@ -103,13 +105,13 @@ fun DownloadsScreen(
                         )
                         Spacer(modifier = Modifier.height(16.dp))
                         Text(
-                            text = "Belum Ada Berkas Unduhan",
+                            text = strings.emptyHistoryTitle,
                             style = MaterialTheme.typography.titleMedium,
                             fontWeight = FontWeight.SemiBold
                         )
                         Spacer(modifier = Modifier.height(8.dp))
                         Text(
-                            text = "Salin link video atau foto (TikTok, Instagram, YouTube, Facebook) dan unduh secara gratis.",
+                            text = strings.emptyHistoryDesc,
                             style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             textAlign = androidx.compose.ui.text.style.TextAlign.Center
@@ -153,8 +155,8 @@ fun DownloadsScreen(
     if (showClearConfirmDialog) {
         AlertDialog(
             onDismissRequest = { showClearConfirmDialog = false },
-            title = { Text("Hapus Semua Riwayat Unduhan?") },
-            text = { Text("Semua catatan dan berkas unduhan akan dihapus dari aplikasi ini.") },
+            title = { Text(strings.clearConfirmTitle) },
+            text = { Text(strings.clearConfirmMessage) },
             confirmButton = {
                 TextButton(
                     onClick = {
@@ -162,12 +164,12 @@ fun DownloadsScreen(
                         showClearConfirmDialog = false
                     }
                 ) {
-                    Text("Hapus Semua", color = MaterialTheme.colorScheme.error)
+                    Text(strings.clearAll, color = MaterialTheme.colorScheme.error)
                 }
             },
             dismissButton = {
                 TextButton(onClick = { showClearConfirmDialog = false }) {
-                    Text("Batal")
+                    Text(strings.btnCancel)
                 }
             }
         )
