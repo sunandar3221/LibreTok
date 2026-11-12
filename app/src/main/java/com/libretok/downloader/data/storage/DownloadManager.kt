@@ -50,6 +50,7 @@ class DownloadManager(
     val activeDownloads: StateFlow<Map<String, ActiveDownload>> = _activeDownloads.asStateFlow()
 
     private val cancelledTasks = ConcurrentHashMap<String, Boolean>()
+    private val slideshowGenerator = SlideshowVideoGenerator(context, client)
 
     private fun sanitizeFilename(name: String): String {
         return name.replace(Regex("[^a-zA-Z0-9.\\-_ ]"), "_")
@@ -73,6 +74,13 @@ class DownloadManager(
         }
 
         val downloadId = "${media.id}_${type.name}_${System.currentTimeMillis()}"
+
+        // Jika postingan foto (isImagesPost atau images tidak kosong) dan type adalah VIDEO / HD_VIDEO,
+        // buat video gabungan foto dan audio (durasi mengikuti durasi lagu/audio)
+        if ((type == DownloadType.VIDEO || type == DownloadType.HD_VIDEO) && (media.isImagesPost || media.images.isNotEmpty())) {
+            val slideshowResult = downloadAndCreateSlideshowVideo(media, type, customFileName, downloadId)
+            return@withContext slideshowResult
+        }
 
         // Jika adaptive stream (seperti YouTube 1080p/720p/480p), unduh video + audio lalu gabungkan dengan MediaMuxer
         if ((type == DownloadType.VIDEO || type == DownloadType.HD_VIDEO) && media.isAdaptiveStream && !media.musicUrl.isNullOrBlank()) {
@@ -569,6 +577,168 @@ class DownloadManager(
             try { tempVideo?.delete() } catch (_: Exception) {}
             try { tempAudio?.delete() } catch (_: Exception) {}
             try { tempMuxed?.delete() } catch (_: Exception) {}
+        }
+    }
+
+    private suspend fun downloadAndCreateSlideshowVideo(
+        media: TikTokMedia,
+        type: DownloadType,
+        customFileName: String?,
+        downloadId: String
+    ): Result<DownloadItem> {
+        val baseTitle = if (!customFileName.isNullOrBlank()) {
+            sanitizeFilename(customFileName)
+        } else {
+            sanitizeFilename(media.title.ifBlank { "LibreTok_${media.platform}_${media.id}" })
+        }
+        val fileName = if (!customFileName.isNullOrBlank()) {
+            "$baseTitle.mp4"
+        } else {
+            "LibreTok_${baseTitle}_${System.currentTimeMillis()}.mp4"
+        }
+
+        updateActiveDownload(
+            ActiveDownload(
+                id = downloadId,
+                title = media.title,
+                type = type,
+                progress = 0f,
+                status = DownloadStatus.DOWNLOADING
+            )
+        )
+
+        var savedFile: File? = null
+        var savedUri: Uri? = null
+        var tempVideoFile: File? = null
+
+        return try {
+            tempVideoFile = File(context.cacheDir, "slideshow_${System.currentTimeMillis()}.mp4")
+
+            val genResult = slideshowGenerator.createSlideshowVideo(
+                media = media,
+                outputFile = tempVideoFile,
+                onProgress = { progress ->
+                    updateActiveDownload(
+                        ActiveDownload(
+                            id = downloadId,
+                            title = media.title,
+                            type = type,
+                            progress = progress,
+                            status = DownloadStatus.DOWNLOADING
+                        )
+                    )
+                },
+                isCancelled = { cancelledTasks[downloadId] == true }
+            )
+
+            if (cancelledTasks[downloadId] == true) {
+                cancelledTasks.remove(downloadId)
+                removeActiveDownload(downloadId)
+                return Result.failure(Exception("Unduhan dibatalkan"))
+            }
+
+            if (genResult.isFailure) {
+                throw genResult.exceptionOrNull() ?: Exception("Gagal membuat video dari foto")
+            }
+
+            val finalLength = tempVideoFile.length()
+            if (finalLength == 0L) {
+                throw Exception("Berkas video yang dihasilkan kosong")
+            }
+
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                val contentValues = ContentValues().apply {
+                    put(MediaStore.MediaColumns.DISPLAY_NAME, fileName)
+                    put(MediaStore.MediaColumns.MIME_TYPE, "video/mp4")
+                    put(MediaStore.MediaColumns.RELATIVE_PATH, Environment.DIRECTORY_MOVIES + "/LibreTok")
+                    put(MediaStore.MediaColumns.IS_PENDING, 1)
+                }
+
+                val uri = context.contentResolver.insert(
+                    MediaStore.Video.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY),
+                    contentValues
+                ) ?: throw Exception("Gagal membuat entri penyimpanan MediaStore")
+                savedUri = uri
+
+                context.contentResolver.openOutputStream(uri).use { outStream ->
+                    if (outStream == null) throw Exception("Gagal membuka stream output MediaStore")
+                    FileInputStream(tempVideoFile).use { inStream ->
+                        inStream.copyTo(outStream)
+                    }
+                }
+
+                contentValues.clear()
+                contentValues.put(MediaStore.MediaColumns.IS_PENDING, 0)
+                context.contentResolver.update(uri, contentValues, null, null)
+
+                val fallbackFile = File(
+                    Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_MOVIES),
+                    "LibreTok/$fileName"
+                )
+                savedFile = fallbackFile
+            } else {
+                val publicDir = File(
+                    Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_MOVIES),
+                    "LibreTok"
+                )
+                if (!publicDir.exists()) publicDir.mkdirs()
+
+                val file = File(publicDir, fileName)
+                savedFile = file
+                FileInputStream(tempVideoFile).use { inStream ->
+                    FileOutputStream(file).use { outStream ->
+                        inStream.copyTo(outStream)
+                    }
+                }
+                savedUri = Uri.fromFile(file)
+            }
+
+            updateActiveDownload(
+                ActiveDownload(
+                    id = downloadId,
+                    title = media.title,
+                    type = type,
+                    progress = 1f,
+                    bytesDownloaded = finalLength,
+                    totalBytes = finalLength,
+                    status = DownloadStatus.COMPLETED
+                )
+            )
+
+            val downloadItem = DownloadItem(
+                id = downloadId,
+                title = media.title,
+                author = "${media.authorName} (@${media.authorUsername})",
+                thumbnailUri = media.coverUrl,
+                filePath = savedFile.absolutePath,
+                fileUri = savedUri?.toString() ?: "",
+                type = type,
+                fileSizeBytes = finalLength,
+                durationSeconds = media.duration,
+                timestamp = System.currentTimeMillis(),
+                sourceUrl = media.originalUrl
+            )
+
+            historyRepository.addItem(downloadItem)
+            removeActiveDownload(downloadId)
+            Result.success(downloadItem)
+        } catch (e: Exception) {
+            updateActiveDownload(
+                ActiveDownload(
+                    id = downloadId,
+                    title = media.title,
+                    type = type,
+                    status = DownloadStatus.FAILED,
+                    errorMessage = e.message ?: "Gagal membuat video dari foto"
+                )
+            )
+            savedUri?.let { uri ->
+                try { context.contentResolver.delete(uri, null, null) } catch (_: Exception) {}
+            }
+            savedFile?.let { if (it.exists()) it.delete() }
+            Result.failure(e)
+        } finally {
+            try { tempVideoFile?.delete() } catch (_: Exception) {}
         }
     }
 

@@ -648,8 +648,8 @@ fun MediaPreviewCard(
                 val isDownloadingAudio = currentActiveDownload?.type == DownloadType.AUDIO
                 val isDownloadingPhotos = currentActiveDownload?.type == DownloadType.PHOTO
 
-                // Button 1: Download Video (Tanpa Watermark) - jika ada video
-                if (media.videoUrl.isNotBlank()) {
+                // Button 1: Download Video (Tanpa Watermark) - jika ada video atau postingan foto (slideshow video)
+                if (media.videoUrl.isNotBlank() || media.images.isNotEmpty()) {
                     Button(
                         onClick = { triggerDownload(DownloadType.VIDEO) },
                         enabled = !isAnyDownloading,
@@ -679,8 +679,8 @@ fun MediaPreviewCard(
                     }
                 }
 
-                // Button 2: Download HD Video (if available)
-                if (!media.hdVideoUrl.isNullOrBlank()) {
+                // Button 2: Download HD Video (if available dan bukan postingan foto)
+                if (!media.hdVideoUrl.isNullOrBlank() && media.images.isEmpty()) {
                     FilledTonalButton(
                         onClick = { triggerDownload(DownloadType.HD_VIDEO) },
                         enabled = !isAnyDownloading,
