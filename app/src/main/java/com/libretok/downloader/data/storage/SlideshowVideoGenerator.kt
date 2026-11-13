@@ -14,6 +14,7 @@ import android.media.MediaExtractor
 import android.media.MediaFormat
 import android.media.MediaMetadataRetriever
 import android.media.MediaMuxer
+import android.net.Uri
 import com.libretok.downloader.data.model.TikTokMedia
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -73,8 +74,8 @@ class SlideshowVideoGenerator(
             if (audioDurationMs <= 0L) {
                 audioDurationMs = (media.duration * 1000L).takeIf { it > 0 } ?: (images.size * 3000L)
             }
-            // Minimal durasi 2 detik
-            audioDurationMs = audioDurationMs.coerceAtLeast(2000L)
+            // Minimal durasi 2 detik, maksimal 5 menit untuk mencegah proses abnormal
+            audioDurationMs = audioDurationMs.coerceIn(2000L, 300_000L)
 
             onProgress(0.12f)
             if (isCancelled()) throw Exception("Pembuatan video dibatalkan")
@@ -101,7 +102,16 @@ class SlideshowVideoGenerator(
 
             // 4. Mux video yang baru dibuat dengan track audio
             if (audioDownloaded && tempAudioFile.exists() && tempAudioFile.length() > 0L) {
-                muxVideoWithAudio(tempRawVideoFile, tempAudioFile, outputFile)
+                muxVideoWithAudio(
+                    videoFile = tempRawVideoFile,
+                    audioFile = tempAudioFile,
+                    outputFile = outputFile,
+                    onProgress = { muxProgress ->
+                        // Skala progress muxing: 0.88f -> 0.99f
+                        onProgress(0.88f + (muxProgress * 0.11f))
+                    },
+                    isCancelled = isCancelled
+                )
             } else {
                 // Jika tidak ada audio, salin video mentah langsung ke output
                 tempRawVideoFile.copyTo(outputFile, overwrite = true)
@@ -140,13 +150,19 @@ class SlideshowVideoGenerator(
         for (url in candidates) {
             if (isCancelled()) return false
             try {
-                val req = Request.Builder()
+                val host = try { Uri.parse(url).host?.lowercase() ?: "" } catch (_: Exception) { "" }
+                val reqBuilder = Request.Builder()
                     .url(url)
                     .header("User-Agent", ua)
                     .header("Accept", "*/*")
-                    .build()
 
-                val resp = client.newCall(req).execute()
+                if (host.contains("tikwm.com")) {
+                    reqBuilder.header("Referer", "https://www.tikwm.com/")
+                } else if (host.contains("tiktok.com")) {
+                    reqBuilder.header("Referer", "https://www.tiktok.com/")
+                }
+
+                val resp = client.newCall(reqBuilder.build()).execute()
                 if (!resp.isSuccessful) continue
                 val body = resp.body ?: continue
 
@@ -188,7 +204,7 @@ class SlideshowVideoGenerator(
     ) {
         val width = 720
         val height = 1280
-        val frameRate = 25
+        val frameRate = 15 // 15 fps sangat optimal untuk slideshow foto (cepat, ringan, dan lancar)
         val frameDurationUs = 1_000_000L / frameRate
         val totalFrames = ((totalDurationMs * frameRate) / 1000L).toInt().coerceAtLeast(frameRate)
 
@@ -196,7 +212,7 @@ class SlideshowVideoGenerator(
 
         val format = MediaFormat.createVideoFormat("video/avc", width, height).apply {
             setInteger(MediaFormat.KEY_COLOR_FORMAT, colorFormat)
-            setInteger(MediaFormat.KEY_BIT_RATE, 2_500_000)
+            setInteger(MediaFormat.KEY_BIT_RATE, 2_000_000)
             setInteger(MediaFormat.KEY_FRAME_RATE, frameRate)
             setInteger(MediaFormat.KEY_I_FRAME_INTERVAL, 1)
         }
@@ -220,17 +236,26 @@ class SlideshowVideoGenerator(
         val timeoutUs = 10_000L
 
         fun drain(endOfStream: Boolean) {
+            var tryAgainCount = 0
+            val maxTryAgain = if (endOfStream) 20 else 3
+
             while (true) {
+                if (isCancelled()) break
                 val outputIndex = encoder.dequeueOutputBuffer(bufferInfo, timeoutUs)
                 if (outputIndex == MediaCodec.INFO_TRY_AGAIN_LATER) {
-                    if (!endOfStream) break
+                    tryAgainCount++
+                    if (tryAgainCount >= maxTryAgain) {
+                        break
+                    }
                 } else if (outputIndex == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED) {
+                    tryAgainCount = 0
                     if (!muxerStarted) {
                         videoTrackIndex = muxer.addTrack(encoder.outputFormat)
                         muxer.start()
                         muxerStarted = true
                     }
                 } else if (outputIndex >= 0) {
+                    tryAgainCount = 0
                     val encodedData = encoder.getOutputBuffer(outputIndex)
                     if (encodedData != null) {
                         if ((bufferInfo.flags and MediaCodec.BUFFER_FLAG_CODEC_CONFIG) != 0) {
@@ -257,8 +282,19 @@ class SlideshowVideoGenerator(
                 if (isCancelled()) throw Exception("Pembuatan video dibatalkan")
 
                 // Unduh dan proses 1 gambar pada satu waktu untuk menghemat memori
-                val req = Request.Builder().url(imgUrl).header("User-Agent", ua).build()
-                val resp = client.newCall(req).execute()
+                val imgHost = try { Uri.parse(imgUrl).host?.lowercase() ?: "" } catch (_: Exception) { "" }
+                val reqBuilder = Request.Builder()
+                    .url(imgUrl)
+                    .header("User-Agent", ua)
+                    .header("Accept", "*/*")
+
+                if (imgHost.contains("tikwm.com")) {
+                    reqBuilder.header("Referer", "https://www.tikwm.com/")
+                } else if (imgHost.contains("tiktok.com")) {
+                    reqBuilder.header("Referer", "https://www.tiktok.com/")
+                }
+
+                val resp = client.newCall(reqBuilder.build()).execute()
                 val imgBytes = resp.body?.bytes()
                 if (imgBytes == null || imgBytes.isEmpty()) continue
 
@@ -281,11 +317,12 @@ class SlideshowVideoGenerator(
                             val inputBuffer = encoder.getInputBuffer(inputBufferIndex)
                                 ?: throw Exception("Input buffer MediaCodec bernilai null")
                             inputBuffer.clear()
-                            inputBuffer.put(yuvBytes)
+                            val bytesToPut = minOf(yuvBytes.size, inputBuffer.remaining())
+                            inputBuffer.put(yuvBytes, 0, bytesToPut)
                             encoder.queueInputBuffer(
                                 inputBufferIndex,
                                 0,
-                                yuvBytes.size,
+                                bytesToPut,
                                 currentTimestampUs,
                                 0
                             )
@@ -305,7 +342,7 @@ class SlideshowVideoGenerator(
             // Kirim tanda End of Stream (EOS) ke encoder
             var eosQueued = false
             var attempts = 0
-            while (!eosQueued && attempts < 100 && !isCancelled()) {
+            while (!eosQueued && attempts < 50 && !isCancelled()) {
                 attempts++
                 val inputBufferIndex = encoder.dequeueInputBuffer(timeoutUs)
                 if (inputBufferIndex >= 0) {
@@ -317,8 +354,9 @@ class SlideshowVideoGenerator(
                         MediaCodec.BUFFER_FLAG_END_OF_STREAM
                     )
                     eosQueued = true
+                } else {
+                    drain(false)
                 }
-                drain(false)
             }
 
             drain(true)
@@ -335,7 +373,9 @@ class SlideshowVideoGenerator(
     private fun muxVideoWithAudio(
         videoFile: File,
         audioFile: File,
-        outputFile: File
+        outputFile: File,
+        onProgress: (Float) -> Unit = {},
+        isCancelled: () -> Boolean = { false }
     ) {
         var videoExtractor: MediaExtractor? = null
         var audioExtractor: MediaExtractor? = null
@@ -381,17 +421,22 @@ class SlideshowVideoGenerator(
             val buffer = ByteBuffer.allocate(1024 * 1024)
             val bufferInfo = MediaCodec.BufferInfo()
 
+            var videoDone = false
+            var audioDone = (audioTrackIndex == -1)
+
             // Interleaved sample writing agar timestamps selalu teratur
-            while (true) {
-                val videoSampleTime = if (videoTrackIndex != -1) videoExtractor.sampleTime else -1L
-                val audioSampleTime = if (audioTrackIndex != -1) audioExtractor.sampleTime else -1L
+            while (!videoDone || !audioDone) {
+                if (isCancelled()) throw Exception("Pembuatan video dibatalkan")
 
-                val hasVideo = videoSampleTime >= 0
-                val hasAudio = audioSampleTime >= 0
+                val videoSampleTime = if (!videoDone) videoExtractor.sampleTime else -1L
+                val audioSampleTime = if (!audioDone) audioExtractor.sampleTime else -1L
 
-                if (!hasVideo && !hasAudio) break
+                if (videoSampleTime < 0L) videoDone = true
+                if (audioSampleTime < 0L) audioDone = true
 
-                if (hasVideo && (!hasAudio || videoSampleTime <= audioSampleTime)) {
+                if (videoDone && audioDone) break
+
+                if (!videoDone && (audioDone || videoSampleTime <= audioSampleTime)) {
                     val sampleSize = videoExtractor.readSampleData(buffer, 0)
                     if (sampleSize >= 0) {
                         bufferInfo.offset = 0
@@ -400,8 +445,10 @@ class SlideshowVideoGenerator(
                         bufferInfo.flags = videoExtractor.sampleFlags
                         muxer.writeSampleData(videoTrackIndex, buffer, bufferInfo)
                         videoExtractor.advance()
+                    } else {
+                        videoDone = true
                     }
-                } else if (hasAudio) {
+                } else if (!audioDone) {
                     val sampleSize = audioExtractor.readSampleData(buffer, 0)
                     if (sampleSize >= 0) {
                         bufferInfo.offset = 0
@@ -410,9 +457,12 @@ class SlideshowVideoGenerator(
                         bufferInfo.flags = audioExtractor.sampleFlags
                         muxer.writeSampleData(audioTrackIndex, buffer, bufferInfo)
                         audioExtractor.advance()
+                    } else {
+                        audioDone = true
                     }
                 }
             }
+            onProgress(1.0f)
         } finally {
             try { muxer?.stop() } catch (_: Exception) {}
             try { muxer?.release() } catch (_: Exception) {}
@@ -489,6 +539,7 @@ class SlideshowVideoGenerator(
         return yuv
     }
 
+    @Suppress("DEPRECATION")
     private fun selectAvcEncoder(): Triple<MediaCodecInfo, Int, Boolean> {
         val codecList = MediaCodecList(MediaCodecList.REGULAR_CODECS)
         for (info in codecList.codecInfos) {
