@@ -200,23 +200,32 @@ class TikTokApiService(
      */
     suspend fun fetchMedia(url: String, quality: String = "1080p"): Result<TikTokMedia> = withContext(Dispatchers.IO) {
         val extracted = extractUrl(url) ?: sanitizeUrl(url)
-        val resolved = resolveRedirectUrl(extracted)
-        val cleanUrl = cleanMediaUrl(resolved)
-        val platform = detectPlatform(cleanUrl)
+        val platform = detectPlatform(extracted)
         val cleanQuality = quality.replace("p", "").ifBlank { "1080" }
 
         if (platform == "TikTok") {
-            var tikWmResult = fetchTikWm(cleanUrl, cleanQuality)
-            if (tikWmResult.isFailure && cleanUrl != resolved) {
-                tikWmResult = fetchTikWm(resolved, cleanQuality)
-            }
-            if (tikWmResult.isFailure && resolved != extracted) {
-                tikWmResult = fetchTikWm(extracted, cleanQuality)
-            }
-
+            // 1. Coba TikWM langsung dengan URL input/ekstrak terlebih dahulu (super cepat ~300ms, tanpa overhead HTTP resolve)
+            var tikWmResult = fetchTikWm(extracted, cleanQuality)
             if (tikWmResult.isSuccess) {
                 return@withContext tikWmResult
             }
+
+            // 2. Jika TikWM langsung gagal, baru coba resolve redirect (fallback)
+            val resolved = resolveRedirectUrl(extracted)
+            val cleanUrl = cleanMediaUrl(resolved)
+            if (cleanUrl != extracted) {
+                tikWmResult = fetchTikWm(cleanUrl, cleanQuality)
+                if (tikWmResult.isSuccess) {
+                    return@withContext tikWmResult
+                }
+            }
+            if (resolved != extracted && resolved != cleanUrl) {
+                tikWmResult = fetchTikWm(resolved, cleanQuality)
+                if (tikWmResult.isSuccess) {
+                    return@withContext tikWmResult
+                }
+            }
+
             // Fallback to Cobalt if TikWM fails
             val cobaltResult = fetchCobalt(cleanUrl, platform, cleanQuality)
             if (cobaltResult.isSuccess) {
@@ -226,6 +235,9 @@ class TikTokApiService(
                 Exception("Video TikTok tidak dapat ditemukan. Pastikan tautan benar dan video bersifat publik.")
             )
         } else if (platform == "YouTube") {
+            val resolved = resolveRedirectUrl(extracted)
+            val cleanUrl = cleanMediaUrl(resolved)
+
             // 1. Coba YouTube Innertube player API langsung (cepat, stabil, tanpa blokir bot datacenter)
             val innertubeResult = fetchYouTubeInnertube(cleanUrl, resolved, extracted, cleanQuality)
             if (innertubeResult.isSuccess) {
@@ -246,6 +258,9 @@ class TikTokApiService(
             return@withContext Result.failure(Exception(errorMsg))
         } else {
             // Instagram, Facebook, Twitter, etc.
+            val resolved = resolveRedirectUrl(extracted)
+            val cleanUrl = cleanMediaUrl(resolved)
+
             var cobaltResult = fetchCobalt(cleanUrl, platform, cleanQuality)
             if (cobaltResult.isFailure && cleanUrl != resolved) {
                 cobaltResult = fetchCobalt(resolved, platform, cleanQuality)

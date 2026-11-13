@@ -45,22 +45,25 @@ class SlideshowVideoGenerator(
             return@withContext Result.failure(Exception("Tidak ada foto untuk dibuat menjadi video"))
         }
 
-        val tempAudioFile = File(context.cacheDir, "temp_slide_audio_${System.currentTimeMillis()}.mp4")
-        val tempRawVideoFile = File(context.cacheDir, "temp_slide_raw_${System.currentTimeMillis()}.mp4")
+        val tempRawAudioFile = File(context.cacheDir, "temp_slide_rawaudio_${System.currentTimeMillis()}.bin")
+        val tempAacAudioFile = File(context.cacheDir, "temp_slide_aac_${System.currentTimeMillis()}.mp4")
+        val tempRawVideoFile = File(context.cacheDir, "temp_slide_rawvideo_${System.currentTimeMillis()}.mp4")
 
         try {
-            onProgress(0.05f)
+            onProgress(0.04f)
 
-            // 1. Unduh sumber audio latar belakang (dari videoUrl MP4 atau musicUrl)
-            val audioDownloaded = downloadAudioSource(media, tempAudioFile, isCancelled)
+            // 1. Unduh sumber audio latar belakang (utamakan lagu musicUrl, fallback videoUrl)
+            val audioDownloaded = downloadAudioSource(media, tempRawAudioFile, isCancelled)
             if (isCancelled()) throw Exception("Pembuatan video dibatalkan")
 
-            // 2. Tentukan durasi total video berdasarkan audio
+            // 2. Dapatkan durasi audio & pastikan audio dalam format AAC MP4 yang kompatibel dengan MediaMuxer
             var audioDurationMs = 0L
-            if (audioDownloaded && tempAudioFile.exists() && tempAudioFile.length() > 0L) {
+            var aacReady = false
+
+            if (audioDownloaded && tempRawAudioFile.exists() && tempRawAudioFile.length() > 0L) {
                 val retriever = MediaMetadataRetriever()
                 try {
-                    retriever.setDataSource(tempAudioFile.absolutePath)
+                    retriever.setDataSource(tempRawAudioFile.absolutePath)
                     val durStr = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)
                     audioDurationMs = durStr?.toLongOrNull() ?: 0L
                 } catch (e: Exception) {
@@ -68,25 +71,28 @@ class SlideshowVideoGenerator(
                 } finally {
                     try { retriever.release() } catch (_: Exception) {}
                 }
+
+                // Transcode audio ke AAC MP4 jika formatnya bukan AAC (misal MP3 dari TikTok)
+                aacReady = prepareAacAudio(tempRawAudioFile, tempAacAudioFile)
             }
 
-            // Fallback durasi jika audio retriever tidak menghasilkan durasi valid
+            // Fallback durasi jika tidak terdeteksi
             if (audioDurationMs <= 0L) {
                 audioDurationMs = (media.duration * 1000L).takeIf { it > 0 } ?: (images.size * 3000L)
             }
-            // Minimal durasi 2 detik, maksimal 5 menit untuk mencegah proses abnormal
+            // Batasi minimal 2 detik dan maksimal 5 menit
             audioDurationMs = audioDurationMs.coerceIn(2000L, 300_000L)
 
             onProgress(0.12f)
             if (isCancelled()) throw Exception("Pembuatan video dibatalkan")
 
-            // 3. Encode gambar-gambar menjadi H.264 video stream
-            encodeImagesToVideo(
+            // 3. Encode foto-foto menjadi video H.264 dengan animasi slide (swipe transition)
+            encodeImagesWithSlideAnimation(
                 images = images,
                 totalDurationMs = audioDurationMs,
                 destinationVideoFile = tempRawVideoFile,
                 onProgress = { encProgress ->
-                    // Skala progress encoding: 0.12f -> 0.85f
+                    // Skala progress: 0.12f -> 0.85f
                     onProgress(0.12f + (encProgress * 0.73f))
                 },
                 isCancelled = isCancelled
@@ -100,20 +106,24 @@ class SlideshowVideoGenerator(
 
             onProgress(0.88f)
 
-            // 4. Mux video yang baru dibuat dengan track audio
-            if (audioDownloaded && tempAudioFile.exists() && tempAudioFile.length() > 0L) {
+            // 4. Muxing video dengan track audio AAC
+            val finalAudioFile = if (aacReady && tempAacAudioFile.exists() && tempAacAudioFile.length() > 0L) {
+                tempAacAudioFile
+            } else if (audioDownloaded && tempRawAudioFile.exists() && tempRawAudioFile.length() > 0L) {
+                tempRawAudioFile
+            } else null
+
+            if (finalAudioFile != null) {
                 muxVideoWithAudio(
                     videoFile = tempRawVideoFile,
-                    audioFile = tempAudioFile,
+                    audioFile = finalAudioFile,
                     outputFile = outputFile,
                     onProgress = { muxProgress ->
-                        // Skala progress muxing: 0.88f -> 0.99f
                         onProgress(0.88f + (muxProgress * 0.11f))
                     },
                     isCancelled = isCancelled
                 )
             } else {
-                // Jika tidak ada audio, salin video mentah langsung ke output
                 tempRawVideoFile.copyTo(outputFile, overwrite = true)
             }
 
@@ -126,7 +136,8 @@ class SlideshowVideoGenerator(
         } catch (e: Exception) {
             Result.failure(e)
         } finally {
-            try { tempAudioFile.delete() } catch (_: Exception) {}
+            try { tempRawAudioFile.delete() } catch (_: Exception) {}
+            try { tempAacAudioFile.delete() } catch (_: Exception) {}
             try { tempRawVideoFile.delete() } catch (_: Exception) {}
         }
     }
@@ -136,12 +147,12 @@ class SlideshowVideoGenerator(
         destinationFile: File,
         isCancelled: () -> Boolean
     ): Boolean {
-        // Prioritas 1: media.videoUrl (MP4 TikTok yang berisi track audio AAC bawaan)
-        // Prioritas 2: media.musicUrl
+        // Prioritas 1: media.musicUrl (Audio lagu resmi TikTok dengan audio utuh dan jernih)
+        // Prioritas 2: media.videoUrl (Dummy video yang mungkin berisi audio AAC bawaan)
         // Prioritas 3: media.previewUrl
         val candidates = listOfNotNull(
-            media.videoUrl.takeIf { it.isNotBlank() },
             media.musicUrl.takeIf { !it.isNullOrBlank() },
+            media.videoUrl.takeIf { it.isNotBlank() },
             media.previewUrl.takeIf { !it.isNullOrBlank() }
         ).distinct()
 
@@ -195,7 +206,230 @@ class SlideshowVideoGenerator(
         return destinationFile.exists() && destinationFile.length() > 0L
     }
 
-    private fun encodeImagesToVideo(
+    private fun prepareAacAudio(rawAudioFile: File, aacOutputFile: File): Boolean {
+        var isAlreadyAac = false
+        val extractor = MediaExtractor()
+        try {
+            extractor.setDataSource(rawAudioFile.absolutePath)
+            for (i in 0 until extractor.trackCount) {
+                val format = extractor.getTrackFormat(i)
+                val mime = format.getString(MediaFormat.KEY_MIME) ?: ""
+                if (mime == "audio/mp4a-latm") {
+                    isAlreadyAac = true
+                    break
+                }
+            }
+        } catch (_: Exception) {
+        } finally {
+            try { extractor.release() } catch (_: Exception) {}
+        }
+
+        if (isAlreadyAac) {
+            rawAudioFile.copyTo(aacOutputFile, overwrite = true)
+            return aacOutputFile.exists() && aacOutputFile.length() > 0L
+        }
+
+        // Jika bukan AAC (misalnya MP3 audio/mpeg dari TikTok), transcode ke AAC MP4
+        return transcodeAudioToAac(rawAudioFile, aacOutputFile)
+    }
+
+    private fun transcodeAudioToAac(
+        sourceFile: File,
+        outputAacFile: File
+    ): Boolean {
+        var extractor: MediaExtractor? = null
+        var decoder: MediaCodec? = null
+        var encoder: MediaCodec? = null
+        var muxer: MediaMuxer? = null
+
+        try {
+            extractor = MediaExtractor().apply { setDataSource(sourceFile.absolutePath) }
+            var audioTrackIndex = -1
+            var sourceFormat: MediaFormat? = null
+
+            for (i in 0 until extractor.trackCount) {
+                val f = extractor.getTrackFormat(i)
+                val mime = f.getString(MediaFormat.KEY_MIME) ?: ""
+                if (mime.startsWith("audio/")) {
+                    audioTrackIndex = i
+                    sourceFormat = f
+                    extractor.selectTrack(i)
+                    break
+                }
+            }
+
+            if (audioTrackIndex == -1 || sourceFormat == null) return false
+
+            val sourceMime = sourceFormat.getString(MediaFormat.KEY_MIME) ?: return false
+
+            decoder = MediaCodec.createDecoderByType(sourceMime)
+            decoder.configure(sourceFormat, null, null, 0)
+            decoder.start()
+
+            val sampleRate = if (sourceFormat.containsKey(MediaFormat.KEY_SAMPLE_RATE)) {
+                sourceFormat.getInteger(MediaFormat.KEY_SAMPLE_RATE)
+            } else 44100
+
+            val channelCount = if (sourceFormat.containsKey(MediaFormat.KEY_CHANNEL_COUNT)) {
+                sourceFormat.getInteger(MediaFormat.KEY_CHANNEL_COUNT)
+            } else 2
+
+            val aacFormat = MediaFormat.createAudioFormat("audio/mp4a-latm", sampleRate, channelCount).apply {
+                setInteger(MediaFormat.KEY_AAC_PROFILE, MediaCodecInfo.CodecProfileLevel.AACObjectLC)
+                setInteger(MediaFormat.KEY_BIT_RATE, 128_000)
+                setInteger(MediaFormat.KEY_MAX_INPUT_SIZE, 16384)
+            }
+
+            encoder = MediaCodec.createEncoderByType("audio/mp4a-latm")
+            encoder.configure(aacFormat, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE)
+            encoder.start()
+
+            muxer = MediaMuxer(outputAacFile.absolutePath, MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4)
+            var outTrackIndex = -1
+            var muxerStarted = false
+
+            val timeoutUs = 10_000L
+            val decBufferInfo = MediaCodec.BufferInfo()
+            val encBufferInfo = MediaCodec.BufferInfo()
+
+            var extractorEos = false
+            var decoderEos = false
+            var encoderEos = false
+
+            fun drainEncoder(endOfStream: Boolean) {
+                var tryCount = 0
+                val maxTries = if (endOfStream) 20 else 2
+                while (true) {
+                    val encOutIndex = encoder.dequeueOutputBuffer(encBufferInfo, timeoutUs)
+                    if (encOutIndex == MediaCodec.INFO_TRY_AGAIN_LATER) {
+                        tryCount++
+                        if (tryCount >= maxTries) break
+                    } else if (encOutIndex == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED) {
+                        tryCount = 0
+                        if (!muxerStarted) {
+                            outTrackIndex = muxer.addTrack(encoder.outputFormat)
+                            muxer.start()
+                            muxerStarted = true
+                        }
+                    } else if (encOutIndex >= 0) {
+                        tryCount = 0
+                        val encOutBuf = encoder.getOutputBuffer(encOutIndex)!!
+                        if ((encBufferInfo.flags and MediaCodec.BUFFER_FLAG_CODEC_CONFIG) != 0) {
+                            encBufferInfo.size = 0
+                        }
+                        if (encBufferInfo.size > 0 && muxerStarted) {
+                            encOutBuf.position(encBufferInfo.offset)
+                            encOutBuf.limit(encBufferInfo.offset + encBufferInfo.size)
+                            muxer.writeSampleData(outTrackIndex, encOutBuf, encBufferInfo)
+                        }
+                        encoder.releaseOutputBuffer(encOutIndex, false)
+                        if ((encBufferInfo.flags and MediaCodec.BUFFER_FLAG_END_OF_STREAM) != 0) {
+                            encoderEos = true
+                            break
+                        }
+                    }
+                }
+            }
+
+            while (!encoderEos) {
+                // 1. Extractor -> Decoder
+                if (!extractorEos) {
+                    val inIndex = decoder.dequeueInputBuffer(timeoutUs)
+                    if (inIndex >= 0) {
+                        val inputBuf = decoder.getInputBuffer(inIndex)!!
+                        inputBuf.clear()
+                        val sampleSize = extractor.readSampleData(inputBuf, 0)
+                        if (sampleSize < 0) {
+                            decoder.queueInputBuffer(inIndex, 0, 0, 0L, MediaCodec.BUFFER_FLAG_END_OF_STREAM)
+                            extractorEos = true
+                        } else {
+                            decoder.queueInputBuffer(inIndex, 0, sampleSize, extractor.sampleTime, 0)
+                            extractor.advance()
+                        }
+                    }
+                }
+
+                // 2. Decoder -> Encoder
+                if (!decoderEos) {
+                    val outIndex = decoder.dequeueOutputBuffer(decBufferInfo, timeoutUs)
+                    if (outIndex >= 0) {
+                        val decOutBuf = decoder.getOutputBuffer(outIndex)!!
+                        val isDecEos = (decBufferInfo.flags and MediaCodec.BUFFER_FLAG_END_OF_STREAM) != 0
+
+                        if (decBufferInfo.size > 0) {
+                            var pcmQueued = false
+                            var attempts = 0
+                            while (!pcmQueued && attempts < 50) {
+                                attempts++
+                                val encInIndex = encoder.dequeueInputBuffer(timeoutUs)
+                                if (encInIndex >= 0) {
+                                    val encInBuf = encoder.getInputBuffer(encInIndex)!!
+                                    encInBuf.clear()
+                                    decOutBuf.position(decBufferInfo.offset)
+                                    val size = minOf(decBufferInfo.size, encInBuf.remaining())
+                                    decOutBuf.limit(decBufferInfo.offset + size)
+                                    encInBuf.put(decOutBuf)
+                                    encoder.queueInputBuffer(
+                                        encInIndex,
+                                        0,
+                                        size,
+                                        decBufferInfo.presentationTimeUs,
+                                        if (isDecEos) MediaCodec.BUFFER_FLAG_END_OF_STREAM else 0
+                                    )
+                                    pcmQueued = true
+                                } else {
+                                    drainEncoder(false)
+                                }
+                            }
+                        } else if (isDecEos) {
+                            var eosQueued = false
+                            var attempts = 0
+                            while (!eosQueued && attempts < 50) {
+                                attempts++
+                                val encInIndex = encoder.dequeueInputBuffer(timeoutUs)
+                                if (encInIndex >= 0) {
+                                    encoder.queueInputBuffer(
+                                        encInIndex,
+                                        0,
+                                        0,
+                                        decBufferInfo.presentationTimeUs,
+                                        MediaCodec.BUFFER_FLAG_END_OF_STREAM
+                                    )
+                                    eosQueued = true
+                                } else {
+                                    drainEncoder(false)
+                                }
+                            }
+                        }
+
+                        decoder.releaseOutputBuffer(outIndex, false)
+                        if (isDecEos) {
+                            decoderEos = true
+                        }
+                    }
+                }
+
+                // 3. Encoder -> Muxer
+                drainEncoder(decoderEos)
+            }
+
+            drainEncoder(true)
+            return outputAacFile.exists() && outputAacFile.length() > 0L
+        } catch (e: Exception) {
+            e.printStackTrace()
+            return false
+        } finally {
+            try { decoder?.stop() } catch (_: Exception) {}
+            try { decoder?.release() } catch (_: Exception) {}
+            try { encoder?.stop() } catch (_: Exception) {}
+            try { encoder?.release() } catch (_: Exception) {}
+            try { muxer?.stop() } catch (_: Exception) {}
+            try { muxer?.release() } catch (_: Exception) {}
+            try { extractor?.release() } catch (_: Exception) {}
+        }
+    }
+
+    private fun encodeImagesWithSlideAnimation(
         images: List<String>,
         totalDurationMs: Long,
         destinationVideoFile: File,
@@ -204,7 +438,7 @@ class SlideshowVideoGenerator(
     ) {
         val width = 720
         val height = 1280
-        val frameRate = 15 // 15 fps sangat optimal untuk slideshow foto (cepat, ringan, dan lancar)
+        val frameRate = 15 // 15 fps untuk slideshow yang halus, cepat, dan ringan
         val frameDurationUs = 1_000_000L / frameRate
         val totalFrames = ((totalDurationMs * frameRate) / 1000L).toInt().coerceAtLeast(frameRate)
 
@@ -275,69 +509,87 @@ class SlideshowVideoGenerator(
             }
         }
 
-        try {
-            val ua = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+        fun feedFrame(yuvBytes: ByteArray) {
+            var inputQueued = false
+            while (!inputQueued && !isCancelled()) {
+                val inputBufferIndex = encoder.dequeueInputBuffer(timeoutUs)
+                if (inputBufferIndex >= 0) {
+                    val inputBuffer = encoder.getInputBuffer(inputBufferIndex)
+                        ?: throw Exception("Input buffer MediaCodec bernilai null")
+                    inputBuffer.clear()
+                    val bytesToPut = minOf(yuvBytes.size, inputBuffer.remaining())
+                    inputBuffer.put(yuvBytes, 0, bytesToPut)
+                    encoder.queueInputBuffer(
+                        inputBufferIndex,
+                        0,
+                        bytesToPut,
+                        currentTimestampUs,
+                        0
+                    )
+                    inputQueued = true
+                    currentTimestampUs += frameDurationUs
+                    globalFrameIndex++
+                }
+                drain(false)
+            }
+            if (totalFrames > 0) {
+                onProgress((globalFrameIndex.toFloat() / totalFrames.toFloat()).coerceIn(0f, 1f))
+            }
+        }
 
-            for ((imgIdx, imgUrl) in images.withIndex()) {
+        try {
+            var currentBitmap: Bitmap? = downloadAndRenderBitmap(images[0], width, height)
+                ?: Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888).apply { eraseColor(Color.BLACK) }
+
+            val transitionBitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
+            val transitionCanvas = Canvas(transitionBitmap)
+            val paint = Paint(Paint.FILTER_BITMAP_FLAG or Paint.ANTI_ALIAS_FLAG)
+
+            for (imgIdx in 0 until numImages) {
                 if (isCancelled()) throw Exception("Pembuatan video dibatalkan")
 
-                // Unduh dan proses 1 gambar pada satu waktu untuk menghemat memori
-                val imgHost = try { Uri.parse(imgUrl).host?.lowercase() ?: "" } catch (_: Exception) { "" }
-                val reqBuilder = Request.Builder()
-                    .url(imgUrl)
-                    .header("User-Agent", ua)
-                    .header("Accept", "*/*")
+                val isLastImage = (imgIdx == numImages - 1)
+                val framesForThisImage = framesPerImage + if (isLastImage) remainder else 0
 
-                if (imgHost.contains("tikwm.com")) {
-                    reqBuilder.header("Referer", "https://www.tikwm.com/")
-                } else if (imgHost.contains("tiktok.com")) {
-                    reqBuilder.header("Referer", "https://www.tiktok.com/")
+                // Durasi transisi geser: ~0.4 detik (6 frame pada 15 fps)
+                val transitionFrames = if (!isLastImage) minOf(6, maxOf(1, framesForThisImage / 4)) else 0
+                val holdFrames = framesForThisImage - transitionFrames
+
+                // 1. Tampilkan gambar saat ini (hold frame diam)
+                val holdYuv = convertBitmapToYuv420(currentBitmap!!, width, height, isSemiPlanar)
+                for (f in 0 until holdFrames) {
+                    if (isCancelled()) throw Exception("Pembuatan video dibatalkan")
+                    feedFrame(holdYuv)
                 }
 
-                val resp = client.newCall(reqBuilder.build()).execute()
-                val imgBytes = resp.body?.bytes()
-                if (imgBytes == null || imgBytes.isEmpty()) continue
+                // 2. Jika ada gambar berikutnya, tampilkan animasi slide horizontal (swipe effect)
+                if (!isLastImage) {
+                    val nextBitmap: Bitmap = downloadAndRenderBitmap(images[imgIdx + 1], width, height)
+                        ?: Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888).apply { eraseColor(Color.BLACK) }
 
-                val rawBitmap = BitmapFactory.decodeByteArray(imgBytes, 0, imgBytes.size) ?: continue
-                val frameBitmap = renderTo720x1280(rawBitmap, width, height)
-                rawBitmap.recycle()
+                    for (t in 0 until transitionFrames) {
+                        if (isCancelled()) throw Exception("Pembuatan video dibatalkan")
+                        val p = (t + 1).toFloat() / transitionFrames
+                        // Kurva ease-in-out yang mulus
+                        val eased = if (p < 0.5f) 2f * p * p else 1f - ((-2f * p + 2f) * (-2f * p + 2f)) / 2f
 
-                val yuvBytes = convertBitmapToYuv420(frameBitmap, width, height, isSemiPlanar)
-                frameBitmap.recycle()
+                        transitionCanvas.drawColor(Color.BLACK)
+                        // Gambar lama bergeser ke kiri (slide out)
+                        transitionCanvas.drawBitmap(currentBitmap, -eased * width, 0f, paint)
+                        // Gambar baru bergeser masuk dari kanan (slide in)
+                        transitionCanvas.drawBitmap(nextBitmap, (1f - eased) * width, 0f, paint)
 
-                val framesForThisImage = framesPerImage + if (imgIdx == numImages - 1) remainder else 0
-
-                for (f in 0 until framesForThisImage) {
-                    if (isCancelled()) throw Exception("Pembuatan video dibatalkan")
-
-                    var inputQueued = false
-                    while (!inputQueued && !isCancelled()) {
-                        val inputBufferIndex = encoder.dequeueInputBuffer(timeoutUs)
-                        if (inputBufferIndex >= 0) {
-                            val inputBuffer = encoder.getInputBuffer(inputBufferIndex)
-                                ?: throw Exception("Input buffer MediaCodec bernilai null")
-                            inputBuffer.clear()
-                            val bytesToPut = minOf(yuvBytes.size, inputBuffer.remaining())
-                            inputBuffer.put(yuvBytes, 0, bytesToPut)
-                            encoder.queueInputBuffer(
-                                inputBufferIndex,
-                                0,
-                                bytesToPut,
-                                currentTimestampUs,
-                                0
-                            )
-                            inputQueued = true
-                            currentTimestampUs += frameDurationUs
-                            globalFrameIndex++
-                        }
-                        drain(false)
+                        val transYuv = convertBitmapToYuv420(transitionBitmap, width, height, isSemiPlanar)
+                        feedFrame(transYuv)
                     }
 
-                    if (totalFrames > 0) {
-                        onProgress((globalFrameIndex.toFloat() / totalFrames.toFloat()).coerceIn(0f, 1f))
-                    }
+                    currentBitmap.recycle()
+                    currentBitmap = nextBitmap
                 }
             }
+
+            currentBitmap?.recycle()
+            transitionBitmap.recycle()
 
             // Kirim tanda End of Stream (EOS) ke encoder
             var eosQueued = false
@@ -367,6 +619,33 @@ class SlideshowVideoGenerator(
                 try { muxer.stop() } catch (_: Exception) {}
                 try { muxer.release() } catch (_: Exception) {}
             }
+        }
+    }
+
+    private fun downloadAndRenderBitmap(imgUrl: String, width: Int, height: Int): Bitmap? {
+        val ua = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+        val imgHost = try { Uri.parse(imgUrl).host?.lowercase() ?: "" } catch (_: Exception) { "" }
+        val reqBuilder = Request.Builder()
+            .url(imgUrl)
+            .header("User-Agent", ua)
+            .header("Accept", "*/*")
+
+        if (imgHost.contains("tikwm.com")) {
+            reqBuilder.header("Referer", "https://www.tikwm.com/")
+        } else if (imgHost.contains("tiktok.com")) {
+            reqBuilder.header("Referer", "https://www.tiktok.com/")
+        }
+
+        return try {
+            val resp = client.newCall(reqBuilder.build()).execute()
+            val imgBytes = resp.body?.bytes() ?: return null
+            val rawBitmap = BitmapFactory.decodeByteArray(imgBytes, 0, imgBytes.size) ?: return null
+            val frameBitmap = renderTo720x1280(rawBitmap, width, height)
+            rawBitmap.recycle()
+            frameBitmap
+        } catch (e: Exception) {
+            e.printStackTrace()
+            null
         }
     }
 
