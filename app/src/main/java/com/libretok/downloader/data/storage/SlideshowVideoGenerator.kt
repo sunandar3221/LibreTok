@@ -50,9 +50,9 @@ class SlideshowVideoGenerator(
         val tempRawVideoFile = File(context.cacheDir, "temp_slide_rawvideo_${System.currentTimeMillis()}.mp4")
 
         try {
-            onProgress(0.04f)
+            onProgress(0.05f)
 
-            // 1. Unduh sumber audio latar belakang (utamakan lagu musicUrl, fallback videoUrl)
+            // 1. Unduh sumber audio latar belakang (utamakan videoUrl yang sudah berisi trek audio AAC TikTok)
             val audioDownloaded = downloadAudioSource(media, tempRawAudioFile, isCancelled)
             if (isCancelled()) throw Exception("Pembuatan video dibatalkan")
 
@@ -72,7 +72,7 @@ class SlideshowVideoGenerator(
                     try { retriever.release() } catch (_: Exception) {}
                 }
 
-                // Transcode audio ke AAC MP4 jika formatnya bukan AAC (misal MP3 dari TikTok)
+                // Periksa apakah audio sudah AAC atau perlu transcode
                 aacReady = prepareAacAudio(tempRawAudioFile, tempAacAudioFile)
             }
 
@@ -147,12 +147,12 @@ class SlideshowVideoGenerator(
         destinationFile: File,
         isCancelled: () -> Boolean
     ): Boolean {
-        // Prioritas 1: media.musicUrl (Audio lagu resmi TikTok dengan audio utuh dan jernih)
-        // Prioritas 2: media.videoUrl (Dummy video yang mungkin berisi audio AAC bawaan)
+        // Prioritas 1: media.videoUrl (MP4 TikTok yang berisi trek AAC resmi)
+        // Prioritas 2: media.musicUrl
         // Prioritas 3: media.previewUrl
         val candidates = listOfNotNull(
-            media.musicUrl.takeIf { !it.isNullOrBlank() },
             media.videoUrl.takeIf { it.isNotBlank() },
+            media.musicUrl.takeIf { !it.isNullOrBlank() },
             media.previewUrl.takeIf { !it.isNullOrBlank() }
         ).distinct()
 
@@ -229,7 +229,7 @@ class SlideshowVideoGenerator(
             return aacOutputFile.exists() && aacOutputFile.length() > 0L
         }
 
-        // Jika bukan AAC (misalnya MP3 audio/mpeg dari TikTok), transcode ke AAC MP4
+        // Jika bukan AAC (misalnya file MP3 audio/mpeg), transcode ke AAC MP4 secara aman
         return transcodeAudioToAac(rawAudioFile, aacOutputFile)
     }
 
@@ -295,10 +295,11 @@ class SlideshowVideoGenerator(
             var extractorEos = false
             var decoderEos = false
             var encoderEos = false
+            var idleLoopCount = 0
 
             fun drainEncoder(endOfStream: Boolean) {
                 var tryCount = 0
-                val maxTries = if (endOfStream) 20 else 2
+                val maxTries = if (endOfStream) 15 else 2
                 while (true) {
                     val encOutIndex = encoder.dequeueOutputBuffer(encBufferInfo, timeoutUs)
                     if (encOutIndex == MediaCodec.INFO_TRY_AGAIN_LATER) {
@@ -313,16 +314,18 @@ class SlideshowVideoGenerator(
                         }
                     } else if (encOutIndex >= 0) {
                         tryCount = 0
-                        val encOutBuf = encoder.getOutputBuffer(encOutIndex)!!
-                        if ((encBufferInfo.flags and MediaCodec.BUFFER_FLAG_CODEC_CONFIG) != 0) {
-                            encBufferInfo.size = 0
+                        val encOutBuf = encoder.getOutputBuffer(encOutIndex)
+                        if (encOutBuf != null) {
+                            if ((encBufferInfo.flags and MediaCodec.BUFFER_FLAG_CODEC_CONFIG) != 0) {
+                                encBufferInfo.size = 0
+                            }
+                            if (encBufferInfo.size > 0 && muxerStarted) {
+                                encOutBuf.position(encBufferInfo.offset)
+                                encOutBuf.limit(encBufferInfo.offset + encBufferInfo.size)
+                                muxer.writeSampleData(outTrackIndex, encOutBuf, encBufferInfo)
+                            }
+                            encoder.releaseOutputBuffer(encOutIndex, false)
                         }
-                        if (encBufferInfo.size > 0 && muxerStarted) {
-                            encOutBuf.position(encBufferInfo.offset)
-                            encOutBuf.limit(encBufferInfo.offset + encBufferInfo.size)
-                            muxer.writeSampleData(outTrackIndex, encOutBuf, encBufferInfo)
-                        }
-                        encoder.releaseOutputBuffer(encOutIndex, false)
                         if ((encBufferInfo.flags and MediaCodec.BUFFER_FLAG_END_OF_STREAM) != 0) {
                             encoderEos = true
                             break
@@ -331,20 +334,25 @@ class SlideshowVideoGenerator(
                 }
             }
 
-            while (!encoderEos) {
+            while (!encoderEos && idleLoopCount < 40) {
+                var hadAction = false
+
                 // 1. Extractor -> Decoder
                 if (!extractorEos) {
                     val inIndex = decoder.dequeueInputBuffer(timeoutUs)
                     if (inIndex >= 0) {
-                        val inputBuf = decoder.getInputBuffer(inIndex)!!
-                        inputBuf.clear()
-                        val sampleSize = extractor.readSampleData(inputBuf, 0)
-                        if (sampleSize < 0) {
-                            decoder.queueInputBuffer(inIndex, 0, 0, 0L, MediaCodec.BUFFER_FLAG_END_OF_STREAM)
-                            extractorEos = true
-                        } else {
-                            decoder.queueInputBuffer(inIndex, 0, sampleSize, extractor.sampleTime, 0)
-                            extractor.advance()
+                        val inputBuf = decoder.getInputBuffer(inIndex)
+                        if (inputBuf != null) {
+                            inputBuf.clear()
+                            val sampleSize = extractor.readSampleData(inputBuf, 0)
+                            if (sampleSize < 0) {
+                                decoder.queueInputBuffer(inIndex, 0, 0, 0L, MediaCodec.BUFFER_FLAG_END_OF_STREAM)
+                                extractorEos = true
+                            } else {
+                                decoder.queueInputBuffer(inIndex, 0, sampleSize, extractor.sampleTime, 0)
+                                extractor.advance()
+                            }
+                            hadAction = true
                         }
                     }
                 }
@@ -353,30 +361,33 @@ class SlideshowVideoGenerator(
                 if (!decoderEos) {
                     val outIndex = decoder.dequeueOutputBuffer(decBufferInfo, timeoutUs)
                     if (outIndex >= 0) {
-                        val decOutBuf = decoder.getOutputBuffer(outIndex)!!
+                        hadAction = true
+                        val decOutBuf = decoder.getOutputBuffer(outIndex)
                         val isDecEos = (decBufferInfo.flags and MediaCodec.BUFFER_FLAG_END_OF_STREAM) != 0
 
-                        if (decBufferInfo.size > 0) {
+                        if (decOutBuf != null && decBufferInfo.size > 0) {
                             var pcmQueued = false
                             var attempts = 0
-                            while (!pcmQueued && attempts < 50) {
+                            while (!pcmQueued && attempts < 20) {
                                 attempts++
                                 val encInIndex = encoder.dequeueInputBuffer(timeoutUs)
                                 if (encInIndex >= 0) {
-                                    val encInBuf = encoder.getInputBuffer(encInIndex)!!
-                                    encInBuf.clear()
-                                    decOutBuf.position(decBufferInfo.offset)
-                                    val size = minOf(decBufferInfo.size, encInBuf.remaining())
-                                    decOutBuf.limit(decBufferInfo.offset + size)
-                                    encInBuf.put(decOutBuf)
-                                    encoder.queueInputBuffer(
-                                        encInIndex,
-                                        0,
-                                        size,
-                                        decBufferInfo.presentationTimeUs,
-                                        if (isDecEos) MediaCodec.BUFFER_FLAG_END_OF_STREAM else 0
-                                    )
-                                    pcmQueued = true
+                                    val encInBuf = encoder.getInputBuffer(encInIndex)
+                                    if (encInBuf != null) {
+                                        encInBuf.clear()
+                                        decOutBuf.position(decBufferInfo.offset)
+                                        val size = minOf(decBufferInfo.size, encInBuf.remaining())
+                                        decOutBuf.limit(decBufferInfo.offset + size)
+                                        encInBuf.put(decOutBuf)
+                                        encoder.queueInputBuffer(
+                                            encInIndex,
+                                            0,
+                                            size,
+                                            decBufferInfo.presentationTimeUs,
+                                            if (isDecEos) MediaCodec.BUFFER_FLAG_END_OF_STREAM else 0
+                                        )
+                                        pcmQueued = true
+                                    }
                                 } else {
                                     drainEncoder(false)
                                 }
@@ -384,7 +395,7 @@ class SlideshowVideoGenerator(
                         } else if (isDecEos) {
                             var eosQueued = false
                             var attempts = 0
-                            while (!eosQueued && attempts < 50) {
+                            while (!eosQueued && attempts < 20) {
                                 attempts++
                                 val encInIndex = encoder.dequeueInputBuffer(timeoutUs)
                                 if (encInIndex >= 0) {
@@ -411,6 +422,12 @@ class SlideshowVideoGenerator(
 
                 // 3. Encoder -> Muxer
                 drainEncoder(decoderEos)
+
+                if (decoderEos) {
+                    idleLoopCount++
+                } else if (hadAction) {
+                    idleLoopCount = 0
+                }
             }
 
             drainEncoder(true)
@@ -438,7 +455,7 @@ class SlideshowVideoGenerator(
     ) {
         val width = 720
         val height = 1280
-        val frameRate = 15 // 15 fps untuk slideshow yang halus, cepat, dan ringan
+        val frameRate = 15 // 15 fps untuk slideshow yang halus, cepat, dan hemat memori
         val frameDurationUs = 1_000_000L / frameRate
         val totalFrames = ((totalDurationMs * frameRate) / 1000L).toInt().coerceAtLeast(frameRate)
 
@@ -703,9 +720,28 @@ class SlideshowVideoGenerator(
             var videoDone = false
             var audioDone = (audioTrackIndex == -1)
 
+            // Lompat melewati frame non-audio (misal dummy video) sampai ke sample audio pertama
+            fun advanceAudioToNextAudioSample() {
+                while (!audioDone) {
+                    val trackIdx = audioExtractor.sampleTrackIndex
+                    if (trackIdx == -1) {
+                        audioDone = true
+                        break
+                    } else if (trackIdx == audioTrackIndex) {
+                        break
+                    } else {
+                        audioExtractor.advance()
+                    }
+                }
+            }
+
+            advanceAudioToNextAudioSample()
+
             // Interleaved sample writing agar timestamps selalu teratur
             while (!videoDone || !audioDone) {
                 if (isCancelled()) throw Exception("Pembuatan video dibatalkan")
+
+                advanceAudioToNextAudioSample()
 
                 val videoSampleTime = if (!videoDone) videoExtractor.sampleTime else -1L
                 val audioSampleTime = if (!audioDone) audioExtractor.sampleTime else -1L
@@ -736,6 +772,7 @@ class SlideshowVideoGenerator(
                         bufferInfo.flags = audioExtractor.sampleFlags
                         muxer.writeSampleData(audioTrackIndex, buffer, bufferInfo)
                         audioExtractor.advance()
+                        advanceAudioToNextAudioSample()
                     } else {
                         audioDone = true
                     }
