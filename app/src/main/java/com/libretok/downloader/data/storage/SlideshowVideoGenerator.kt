@@ -23,6 +23,7 @@ import okhttp3.Request
 import java.io.File
 import java.io.FileOutputStream
 import java.nio.ByteBuffer
+import java.util.concurrent.TimeUnit
 
 class SlideshowVideoGenerator(
     private val context: Context,
@@ -45,25 +46,23 @@ class SlideshowVideoGenerator(
             return@withContext Result.failure(Exception("Tidak ada foto untuk dibuat menjadi video"))
         }
 
-        val tempRawAudioFile = File(context.cacheDir, "temp_slide_rawaudio_${System.currentTimeMillis()}.bin")
-        val tempAacAudioFile = File(context.cacheDir, "temp_slide_aac_${System.currentTimeMillis()}.mp4")
+        val tempAudioFile = File(context.cacheDir, "temp_slide_audio_${System.currentTimeMillis()}.mp4")
         val tempRawVideoFile = File(context.cacheDir, "temp_slide_rawvideo_${System.currentTimeMillis()}.mp4")
 
         try {
             onProgress(0.05f)
 
             // 1. Unduh sumber audio latar belakang (utamakan videoUrl yang sudah berisi trek audio AAC TikTok)
-            val audioDownloaded = downloadAudioSource(media, tempRawAudioFile, isCancelled)
+            val audioDownloaded = downloadAudioSource(media, tempAudioFile, isCancelled)
             if (isCancelled()) throw Exception("Pembuatan video dibatalkan")
 
-            // 2. Dapatkan durasi audio & pastikan audio dalam format AAC MP4 yang kompatibel dengan MediaMuxer
+            // 2. Dapatkan durasi audio secara akurat
             var audioDurationMs = 0L
-            var aacReady = false
 
-            if (audioDownloaded && tempRawAudioFile.exists() && tempRawAudioFile.length() > 0L) {
+            if (audioDownloaded && tempAudioFile.exists() && tempAudioFile.length() > 0L) {
                 val retriever = MediaMetadataRetriever()
                 try {
-                    retriever.setDataSource(tempRawAudioFile.absolutePath)
+                    retriever.setDataSource(tempAudioFile.absolutePath)
                     val durStr = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)
                     audioDurationMs = durStr?.toLongOrNull() ?: 0L
                 } catch (e: Exception) {
@@ -71,9 +70,6 @@ class SlideshowVideoGenerator(
                 } finally {
                     try { retriever.release() } catch (_: Exception) {}
                 }
-
-                // Periksa apakah audio sudah AAC atau perlu transcode
-                aacReady = prepareAacAudio(tempRawAudioFile, tempAacAudioFile)
             }
 
             // Fallback durasi jika tidak terdeteksi
@@ -106,17 +102,11 @@ class SlideshowVideoGenerator(
 
             onProgress(0.88f)
 
-            // 4. Muxing video dengan track audio AAC
-            val finalAudioFile = if (aacReady && tempAacAudioFile.exists() && tempAacAudioFile.length() > 0L) {
-                tempAacAudioFile
-            } else if (audioDownloaded && tempRawAudioFile.exists() && tempRawAudioFile.length() > 0L) {
-                tempRawAudioFile
-            } else null
-
-            if (finalAudioFile != null) {
+            // 4. Muxing video dengan track audio AAC asli
+            if (audioDownloaded && tempAudioFile.exists() && tempAudioFile.length() > 0L) {
                 muxVideoWithAudio(
                     videoFile = tempRawVideoFile,
-                    audioFile = finalAudioFile,
+                    audioFile = tempAudioFile,
                     outputFile = outputFile,
                     onProgress = { muxProgress ->
                         onProgress(0.88f + (muxProgress * 0.11f))
@@ -136,8 +126,7 @@ class SlideshowVideoGenerator(
         } catch (e: Exception) {
             Result.failure(e)
         } finally {
-            try { tempRawAudioFile.delete() } catch (_: Exception) {}
-            try { tempAacAudioFile.delete() } catch (_: Exception) {}
+            try { tempAudioFile.delete() } catch (_: Exception) {}
             try { tempRawVideoFile.delete() } catch (_: Exception) {}
         }
     }
@@ -173,7 +162,12 @@ class SlideshowVideoGenerator(
                     reqBuilder.header("Referer", "https://www.tiktok.com/")
                 }
 
-                val resp = client.newCall(reqBuilder.build()).execute()
+                val fastClient = client.newBuilder()
+                    .connectTimeout(15, TimeUnit.SECONDS)
+                    .readTimeout(30, TimeUnit.SECONDS)
+                    .build()
+
+                val resp = fastClient.newCall(reqBuilder.build()).execute()
                 if (!resp.isSuccessful) continue
                 val body = resp.body ?: continue
 
@@ -204,246 +198,6 @@ class SlideshowVideoGenerator(
             }
         }
         return destinationFile.exists() && destinationFile.length() > 0L
-    }
-
-    private fun prepareAacAudio(rawAudioFile: File, aacOutputFile: File): Boolean {
-        var isAlreadyAac = false
-        val extractor = MediaExtractor()
-        try {
-            extractor.setDataSource(rawAudioFile.absolutePath)
-            for (i in 0 until extractor.trackCount) {
-                val format = extractor.getTrackFormat(i)
-                val mime = format.getString(MediaFormat.KEY_MIME) ?: ""
-                if (mime == "audio/mp4a-latm") {
-                    isAlreadyAac = true
-                    break
-                }
-            }
-        } catch (_: Exception) {
-        } finally {
-            try { extractor.release() } catch (_: Exception) {}
-        }
-
-        if (isAlreadyAac) {
-            rawAudioFile.copyTo(aacOutputFile, overwrite = true)
-            return aacOutputFile.exists() && aacOutputFile.length() > 0L
-        }
-
-        // Jika bukan AAC (misalnya file MP3 audio/mpeg), transcode ke AAC MP4 secara aman
-        return transcodeAudioToAac(rawAudioFile, aacOutputFile)
-    }
-
-    private fun transcodeAudioToAac(
-        sourceFile: File,
-        outputAacFile: File
-    ): Boolean {
-        var extractor: MediaExtractor? = null
-        var decoder: MediaCodec? = null
-        var encoder: MediaCodec? = null
-        var muxer: MediaMuxer? = null
-
-        try {
-            extractor = MediaExtractor().apply { setDataSource(sourceFile.absolutePath) }
-            var audioTrackIndex = -1
-            var sourceFormat: MediaFormat? = null
-
-            for (i in 0 until extractor.trackCount) {
-                val f = extractor.getTrackFormat(i)
-                val mime = f.getString(MediaFormat.KEY_MIME) ?: ""
-                if (mime.startsWith("audio/")) {
-                    audioTrackIndex = i
-                    sourceFormat = f
-                    extractor.selectTrack(i)
-                    break
-                }
-            }
-
-            if (audioTrackIndex == -1 || sourceFormat == null) return false
-
-            val sourceMime = sourceFormat.getString(MediaFormat.KEY_MIME) ?: return false
-
-            decoder = MediaCodec.createDecoderByType(sourceMime)
-            decoder.configure(sourceFormat, null, null, 0)
-            decoder.start()
-
-            val sampleRate = if (sourceFormat.containsKey(MediaFormat.KEY_SAMPLE_RATE)) {
-                sourceFormat.getInteger(MediaFormat.KEY_SAMPLE_RATE)
-            } else 44100
-
-            val channelCount = if (sourceFormat.containsKey(MediaFormat.KEY_CHANNEL_COUNT)) {
-                sourceFormat.getInteger(MediaFormat.KEY_CHANNEL_COUNT)
-            } else 2
-
-            val aacFormat = MediaFormat.createAudioFormat("audio/mp4a-latm", sampleRate, channelCount).apply {
-                setInteger(MediaFormat.KEY_AAC_PROFILE, MediaCodecInfo.CodecProfileLevel.AACObjectLC)
-                setInteger(MediaFormat.KEY_BIT_RATE, 128_000)
-                setInteger(MediaFormat.KEY_MAX_INPUT_SIZE, 16384)
-            }
-
-            encoder = MediaCodec.createEncoderByType("audio/mp4a-latm")
-            encoder.configure(aacFormat, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE)
-            encoder.start()
-
-            muxer = MediaMuxer(outputAacFile.absolutePath, MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4)
-            var outTrackIndex = -1
-            var muxerStarted = false
-
-            val timeoutUs = 10_000L
-            val decBufferInfo = MediaCodec.BufferInfo()
-            val encBufferInfo = MediaCodec.BufferInfo()
-
-            var extractorEos = false
-            var decoderEos = false
-            var encoderEos = false
-            var idleLoopCount = 0
-
-            fun drainEncoder(endOfStream: Boolean) {
-                var tryCount = 0
-                val maxTries = if (endOfStream) 15 else 2
-                while (true) {
-                    val encOutIndex = encoder.dequeueOutputBuffer(encBufferInfo, timeoutUs)
-                    if (encOutIndex == MediaCodec.INFO_TRY_AGAIN_LATER) {
-                        tryCount++
-                        if (tryCount >= maxTries) break
-                    } else if (encOutIndex == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED) {
-                        tryCount = 0
-                        if (!muxerStarted) {
-                            outTrackIndex = muxer.addTrack(encoder.outputFormat)
-                            muxer.start()
-                            muxerStarted = true
-                        }
-                    } else if (encOutIndex >= 0) {
-                        tryCount = 0
-                        val encOutBuf = encoder.getOutputBuffer(encOutIndex)
-                        if (encOutBuf != null) {
-                            if ((encBufferInfo.flags and MediaCodec.BUFFER_FLAG_CODEC_CONFIG) != 0) {
-                                encBufferInfo.size = 0
-                            }
-                            if (encBufferInfo.size > 0 && muxerStarted) {
-                                encOutBuf.position(encBufferInfo.offset)
-                                encOutBuf.limit(encBufferInfo.offset + encBufferInfo.size)
-                                muxer.writeSampleData(outTrackIndex, encOutBuf, encBufferInfo)
-                            }
-                            encoder.releaseOutputBuffer(encOutIndex, false)
-                        }
-                        if ((encBufferInfo.flags and MediaCodec.BUFFER_FLAG_END_OF_STREAM) != 0) {
-                            encoderEos = true
-                            break
-                        }
-                    }
-                }
-            }
-
-            while (!encoderEos && idleLoopCount < 40) {
-                var hadAction = false
-
-                // 1. Extractor -> Decoder
-                if (!extractorEos) {
-                    val inIndex = decoder.dequeueInputBuffer(timeoutUs)
-                    if (inIndex >= 0) {
-                        val inputBuf = decoder.getInputBuffer(inIndex)
-                        if (inputBuf != null) {
-                            inputBuf.clear()
-                            val sampleSize = extractor.readSampleData(inputBuf, 0)
-                            if (sampleSize < 0) {
-                                decoder.queueInputBuffer(inIndex, 0, 0, 0L, MediaCodec.BUFFER_FLAG_END_OF_STREAM)
-                                extractorEos = true
-                            } else {
-                                decoder.queueInputBuffer(inIndex, 0, sampleSize, extractor.sampleTime, 0)
-                                extractor.advance()
-                            }
-                            hadAction = true
-                        }
-                    }
-                }
-
-                // 2. Decoder -> Encoder
-                if (!decoderEos) {
-                    val outIndex = decoder.dequeueOutputBuffer(decBufferInfo, timeoutUs)
-                    if (outIndex >= 0) {
-                        hadAction = true
-                        val decOutBuf = decoder.getOutputBuffer(outIndex)
-                        val isDecEos = (decBufferInfo.flags and MediaCodec.BUFFER_FLAG_END_OF_STREAM) != 0
-
-                        if (decOutBuf != null && decBufferInfo.size > 0) {
-                            var pcmQueued = false
-                            var attempts = 0
-                            while (!pcmQueued && attempts < 20) {
-                                attempts++
-                                val encInIndex = encoder.dequeueInputBuffer(timeoutUs)
-                                if (encInIndex >= 0) {
-                                    val encInBuf = encoder.getInputBuffer(encInIndex)
-                                    if (encInBuf != null) {
-                                        encInBuf.clear()
-                                        decOutBuf.position(decBufferInfo.offset)
-                                        val size = minOf(decBufferInfo.size, encInBuf.remaining())
-                                        decOutBuf.limit(decBufferInfo.offset + size)
-                                        encInBuf.put(decOutBuf)
-                                        encoder.queueInputBuffer(
-                                            encInIndex,
-                                            0,
-                                            size,
-                                            decBufferInfo.presentationTimeUs,
-                                            if (isDecEos) MediaCodec.BUFFER_FLAG_END_OF_STREAM else 0
-                                        )
-                                        pcmQueued = true
-                                    }
-                                } else {
-                                    drainEncoder(false)
-                                }
-                            }
-                        } else if (isDecEos) {
-                            var eosQueued = false
-                            var attempts = 0
-                            while (!eosQueued && attempts < 20) {
-                                attempts++
-                                val encInIndex = encoder.dequeueInputBuffer(timeoutUs)
-                                if (encInIndex >= 0) {
-                                    encoder.queueInputBuffer(
-                                        encInIndex,
-                                        0,
-                                        0,
-                                        decBufferInfo.presentationTimeUs,
-                                        MediaCodec.BUFFER_FLAG_END_OF_STREAM
-                                    )
-                                    eosQueued = true
-                                } else {
-                                    drainEncoder(false)
-                                }
-                            }
-                        }
-
-                        decoder.releaseOutputBuffer(outIndex, false)
-                        if (isDecEos) {
-                            decoderEos = true
-                        }
-                    }
-                }
-
-                // 3. Encoder -> Muxer
-                drainEncoder(decoderEos)
-
-                if (decoderEos) {
-                    idleLoopCount++
-                } else if (hadAction) {
-                    idleLoopCount = 0
-                }
-            }
-
-            drainEncoder(true)
-            return outputAacFile.exists() && outputAacFile.length() > 0L
-        } catch (e: Exception) {
-            e.printStackTrace()
-            return false
-        } finally {
-            try { decoder?.stop() } catch (_: Exception) {}
-            try { decoder?.release() } catch (_: Exception) {}
-            try { encoder?.stop() } catch (_: Exception) {}
-            try { encoder?.release() } catch (_: Exception) {}
-            try { muxer?.stop() } catch (_: Exception) {}
-            try { muxer?.release() } catch (_: Exception) {}
-            try { extractor?.release() } catch (_: Exception) {}
-        }
     }
 
     private fun encodeImagesWithSlideAnimation(
@@ -653,8 +407,13 @@ class SlideshowVideoGenerator(
             reqBuilder.header("Referer", "https://www.tiktok.com/")
         }
 
+        val fastClient = client.newBuilder()
+            .connectTimeout(15, TimeUnit.SECONDS)
+            .readTimeout(20, TimeUnit.SECONDS)
+            .build()
+
         return try {
-            val resp = client.newCall(reqBuilder.build()).execute()
+            val resp = fastClient.newCall(reqBuilder.build()).execute()
             val imgBytes = resp.body?.bytes() ?: return null
             val rawBitmap = BitmapFactory.decodeByteArray(imgBytes, 0, imgBytes.size) ?: return null
             val frameBitmap = renderTo720x1280(rawBitmap, width, height)
