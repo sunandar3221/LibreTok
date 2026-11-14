@@ -28,16 +28,16 @@ class SlideshowVideoGeneratorTest {
             originalUrl = "https://www.tiktok.com/@user/video/12345"
         )
 
-        // Prioritas kandidat audio yang aman untuk MediaMuxer AAC
+        // Prioritas kandidat audio latar belakang: utamakan musik MP3 TikTok asli
         val candidates = listOfNotNull(
-            mediaWithAll.videoUrl.takeIf { it.isNotBlank() },
             mediaWithAll.musicUrl.takeIf { !it.isNullOrBlank() },
+            mediaWithAll.videoUrl.takeIf { it.isNotBlank() },
             mediaWithAll.previewUrl.takeIf { !it.isNullOrBlank() }
         ).distinct()
 
         assertEquals(2, candidates.size)
-        assertEquals("https://example.com/video.mp4", candidates[0])
-        assertEquals("https://example.com/music.mp3", candidates[1])
+        assertEquals("https://example.com/music.mp3", candidates[0])
+        assertEquals("https://example.com/video.mp4", candidates[1])
     }
 
     @Test
@@ -73,5 +73,20 @@ class SlideshowVideoGeneratorTest {
 
         assertTrue("Sample index harus cocok dengan extractor audio index", isAudioSample)
         assertTrue("Sample index tidak boleh disamakan dengan muxer index yang berbeda", !wrongComparison)
+    }
+
+    @Test
+    fun testPcmTimestampCalculation() {
+        val sampleRate = 44100
+        val channels = 2
+        val bytesPerSecond = sampleRate * channels * 2L // 16-bit PCM: 2 bytes per sample
+        assertEquals(176400L, bytesPerSecond)
+
+        val frameSize = 1024 * channels * 2 // 4096 bytes per AAC frame
+        assertEquals(4096, frameSize)
+
+        val frameTimeUs = (frameSize.toLong() * 1_000_000L) / bytesPerSecond
+        // 4096 * 1000000 / 176400 = 23219.95 -> 23219 us (~23.2ms)
+        assertEquals(23219L, frameTimeUs)
     }
 }

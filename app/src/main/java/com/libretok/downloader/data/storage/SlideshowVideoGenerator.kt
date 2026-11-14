@@ -21,6 +21,7 @@ import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import java.io.File
+import java.io.FileInputStream
 import java.io.FileOutputStream
 import java.nio.ByteBuffer
 import java.util.concurrent.TimeUnit
@@ -46,23 +47,25 @@ class SlideshowVideoGenerator(
             return@withContext Result.failure(Exception("Tidak ada foto untuk dibuat menjadi video"))
         }
 
-        val tempAudioFile = File(context.cacheDir, "temp_slide_audio_${System.currentTimeMillis()}.mp4")
+        val tempRawAudioFile = File(context.cacheDir, "temp_slide_rawaudio_${System.currentTimeMillis()}.bin")
+        val tempPcmFile = File(context.cacheDir, "temp_slide_pcm_${System.currentTimeMillis()}.raw")
+        val tempAacAudioFile = File(context.cacheDir, "temp_slide_aac_${System.currentTimeMillis()}.mp4")
         val tempRawVideoFile = File(context.cacheDir, "temp_slide_rawvideo_${System.currentTimeMillis()}.mp4")
 
         try {
-            onProgress(0.05f)
+            onProgress(0.04f)
 
-            // 1. Unduh sumber audio latar belakang (utamakan videoUrl yang sudah berisi trek audio AAC TikTok)
-            val audioDownloaded = downloadAudioSource(media, tempAudioFile, isCancelled)
+            // 1. Unduh sumber audio latar belakang (utamakan musicUrl MP3 asli dari TikTok)
+            val audioDownloaded = downloadAudioSource(media, tempRawAudioFile, isCancelled)
             if (isCancelled()) throw Exception("Pembuatan video dibatalkan")
 
             // 2. Dapatkan durasi audio secara akurat
             var audioDurationMs = 0L
 
-            if (audioDownloaded && tempAudioFile.exists() && tempAudioFile.length() > 0L) {
+            if (audioDownloaded && tempRawAudioFile.exists() && tempRawAudioFile.length() > 0L) {
                 val retriever = MediaMetadataRetriever()
                 try {
-                    retriever.setDataSource(tempAudioFile.absolutePath)
+                    retriever.setDataSource(tempRawAudioFile.absolutePath)
                     val durStr = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)
                     audioDurationMs = durStr?.toLongOrNull() ?: 0L
                 } catch (e: Exception) {
@@ -79,10 +82,23 @@ class SlideshowVideoGenerator(
             // Batasi minimal 2 detik dan maksimal 5 menit
             audioDurationMs = audioDurationMs.coerceIn(2000L, 300_000L)
 
+            onProgress(0.08f)
+            if (isCancelled()) throw Exception("Pembuatan video dibatalkan")
+
+            // 3. Siapkan audio agar kompatibel dengan MediaMuxer MP4 (transcode MP3 ke AAC jika diperlukan)
+            val finalAudioFile = if (audioDownloaded && tempRawAudioFile.exists() && tempRawAudioFile.length() > 0L) {
+                prepareAudioForMuxing(
+                    rawAudioFile = tempRawAudioFile,
+                    tempPcmFile = tempPcmFile,
+                    tempAacFile = tempAacAudioFile,
+                    isCancelled = isCancelled
+                )
+            } else null
+
             onProgress(0.12f)
             if (isCancelled()) throw Exception("Pembuatan video dibatalkan")
 
-            // 3. Encode foto-foto menjadi video H.264 dengan animasi slide (swipe transition)
+            // 4. Encode foto-foto menjadi video H.264 dengan animasi slide (swipe transition)
             encodeImagesWithSlideAnimation(
                 images = images,
                 totalDurationMs = audioDurationMs,
@@ -102,11 +118,12 @@ class SlideshowVideoGenerator(
 
             onProgress(0.88f)
 
-            // 4. Muxing video dengan track audio AAC asli
-            if (audioDownloaded && tempAudioFile.exists() && tempAudioFile.length() > 0L) {
+            // 5. Muxing video dengan track audio AAC
+            val audioToMux = finalAudioFile ?: (if (audioDownloaded && tempRawAudioFile.exists() && tempRawAudioFile.length() > 0L) tempRawAudioFile else null)
+            if (audioToMux != null && audioToMux.exists() && audioToMux.length() > 0L) {
                 muxVideoWithAudio(
                     videoFile = tempRawVideoFile,
-                    audioFile = tempAudioFile,
+                    audioFile = audioToMux,
                     outputFile = outputFile,
                     onProgress = { muxProgress ->
                         onProgress(0.88f + (muxProgress * 0.11f))
@@ -126,8 +143,310 @@ class SlideshowVideoGenerator(
         } catch (e: Exception) {
             Result.failure(e)
         } finally {
-            try { tempAudioFile.delete() } catch (_: Exception) {}
+            try { tempRawAudioFile.delete() } catch (_: Exception) {}
+            try { tempPcmFile.delete() } catch (_: Exception) {}
+            try { tempAacAudioFile.delete() } catch (_: Exception) {}
             try { tempRawVideoFile.delete() } catch (_: Exception) {}
+        }
+    }
+
+    private data class AudioFormatInfo(
+        val sampleRate: Int,
+        val channelCount: Int
+    )
+
+    private fun prepareAudioForMuxing(
+        rawAudioFile: File,
+        tempPcmFile: File,
+        tempAacFile: File,
+        isCancelled: () -> Boolean
+    ): File? {
+        val mime = getAudioMimeType(rawAudioFile) ?: return null
+        if (mime == "audio/mp4a-latm") {
+            // Sudah dalam format AAC MP4, bisa langsung dipakai untuk muxing
+            return rawAudioFile
+        }
+
+        // Format audio lain (seperti audio/mpeg MP3 dari TikTok):
+        // Tahap 1: Decode MP3 ke PCM mentah secara sekuensial (bebas risiko deadlock)
+        val formatInfo = decodeAudioToPcm(rawAudioFile, tempPcmFile, isCancelled) ?: return null
+        if (isCancelled()) return null
+
+        // Tahap 2: Encode PCM mentah ke AAC MP4 (bebas risiko deadlock)
+        val ok = encodePcmToAacMp4(
+            pcmFile = tempPcmFile,
+            aacOutputFile = tempAacFile,
+            sampleRate = formatInfo.sampleRate,
+            channelCount = formatInfo.channelCount,
+            isCancelled = isCancelled
+        )
+        if (ok && tempAacFile.exists() && tempAacFile.length() > 0L) {
+            return tempAacFile
+        }
+        return null
+    }
+
+    private fun getAudioMimeType(file: File): String? {
+        val extractor = MediaExtractor()
+        try {
+            extractor.setDataSource(file.absolutePath)
+            for (i in 0 until extractor.trackCount) {
+                val format = extractor.getTrackFormat(i)
+                val mime = format.getString(MediaFormat.KEY_MIME) ?: ""
+                if (mime.startsWith("audio/")) {
+                    return mime
+                }
+            }
+        } catch (e: Exception) {
+            e.printStackTrace()
+        } finally {
+            try { extractor.release() } catch (_: Exception) {}
+        }
+        return null
+    }
+
+    private fun decodeAudioToPcm(
+        sourceAudioFile: File,
+        pcmOutputFile: File,
+        isCancelled: () -> Boolean
+    ): AudioFormatInfo? {
+        var extractor: MediaExtractor? = null
+        var decoder: MediaCodec? = null
+        var fos: FileOutputStream? = null
+
+        try {
+            extractor = MediaExtractor().apply { setDataSource(sourceAudioFile.absolutePath) }
+            var audioTrackIndex = -1
+            var trackFormat: MediaFormat? = null
+
+            for (i in 0 until extractor.trackCount) {
+                val format = extractor.getTrackFormat(i)
+                val mime = format.getString(MediaFormat.KEY_MIME) ?: ""
+                if (mime.startsWith("audio/")) {
+                    audioTrackIndex = i
+                    trackFormat = format
+                    extractor.selectTrack(i)
+                    break
+                }
+            }
+
+            if (audioTrackIndex == -1 || trackFormat == null) return null
+
+            val mime = trackFormat.getString(MediaFormat.KEY_MIME) ?: return null
+            decoder = MediaCodec.createDecoderByType(mime)
+            decoder.configure(trackFormat, null, null, 0)
+            decoder.start()
+
+            fos = FileOutputStream(pcmOutputFile)
+
+            val timeoutUs = 10_000L
+            val bufferInfo = MediaCodec.BufferInfo()
+            var inputEos = false
+            var outputEos = false
+
+            var actualSampleRate = if (trackFormat.containsKey(MediaFormat.KEY_SAMPLE_RATE)) {
+                trackFormat.getInteger(MediaFormat.KEY_SAMPLE_RATE)
+            } else 44100
+            var actualChannels = if (trackFormat.containsKey(MediaFormat.KEY_CHANNEL_COUNT)) {
+                trackFormat.getInteger(MediaFormat.KEY_CHANNEL_COUNT)
+            } else 2
+
+            var idleCount = 0
+            val maxIdle = 500
+
+            while (!outputEos && idleCount < maxIdle) {
+                if (isCancelled()) return null
+                var progressMade = false
+
+                // 1. Masukkan sampel dari Extractor ke Decoder
+                if (!inputEos) {
+                    val inIndex = decoder.dequeueInputBuffer(timeoutUs)
+                    if (inIndex >= 0) {
+                        val inBuffer = decoder.getInputBuffer(inIndex)
+                        if (inBuffer != null) {
+                            inBuffer.clear()
+                            val sampleSize = extractor.readSampleData(inBuffer, 0)
+                            if (sampleSize < 0) {
+                                decoder.queueInputBuffer(inIndex, 0, 0, 0L, MediaCodec.BUFFER_FLAG_END_OF_STREAM)
+                                inputEos = true
+                            } else {
+                                decoder.queueInputBuffer(inIndex, 0, sampleSize, extractor.sampleTime, 0)
+                                extractor.advance()
+                            }
+                            progressMade = true
+                        }
+                    }
+                }
+
+                // 2. Ambil data PCM mentah dari Decoder lalu simpan ke berkas sementara
+                val outIndex = decoder.dequeueOutputBuffer(bufferInfo, timeoutUs)
+                if (outIndex >= 0) {
+                    progressMade = true
+                    val outBuffer = decoder.getOutputBuffer(outIndex)
+                    if (outBuffer != null && bufferInfo.size > 0) {
+                        outBuffer.position(bufferInfo.offset)
+                        outBuffer.limit(bufferInfo.offset + bufferInfo.size)
+                        val pcmBytes = ByteArray(bufferInfo.size)
+                        outBuffer.get(pcmBytes)
+                        fos.write(pcmBytes)
+                    }
+                    decoder.releaseOutputBuffer(outIndex, false)
+
+                    if ((bufferInfo.flags and MediaCodec.BUFFER_FLAG_END_OF_STREAM) != 0) {
+                        outputEos = true
+                        break
+                    }
+                } else if (outIndex == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED) {
+                    progressMade = true
+                    val newFormat = decoder.outputFormat
+                    if (newFormat.containsKey(MediaFormat.KEY_SAMPLE_RATE)) {
+                        actualSampleRate = newFormat.getInteger(MediaFormat.KEY_SAMPLE_RATE)
+                    }
+                    if (newFormat.containsKey(MediaFormat.KEY_CHANNEL_COUNT)) {
+                        actualChannels = newFormat.getInteger(MediaFormat.KEY_CHANNEL_COUNT)
+                    }
+                }
+
+                if (progressMade) {
+                    idleCount = 0
+                } else {
+                    idleCount++
+                }
+            }
+
+            fos.flush()
+            if (pcmOutputFile.exists() && pcmOutputFile.length() > 0L) {
+                return AudioFormatInfo(actualSampleRate, actualChannels)
+            }
+            return null
+        } catch (e: Exception) {
+            e.printStackTrace()
+            return null
+        } finally {
+            try { fos?.close() } catch (_: Exception) {}
+            try { decoder?.stop() } catch (_: Exception) {}
+            try { decoder?.release() } catch (_: Exception) {}
+            try { extractor?.release() } catch (_: Exception) {}
+        }
+    }
+
+    private fun encodePcmToAacMp4(
+        pcmFile: File,
+        aacOutputFile: File,
+        sampleRate: Int,
+        channelCount: Int,
+        isCancelled: () -> Boolean
+    ): Boolean {
+        var encoder: MediaCodec? = null
+        var muxer: MediaMuxer? = null
+        var fis: FileInputStream? = null
+        var muxerStarted = false
+
+        val validSampleRates = intArrayOf(96000, 88200, 64000, 48000, 44100, 32000, 24000, 22050, 16000, 12000, 11025, 8000)
+        val rate = if (sampleRate in validSampleRates) sampleRate else 44100
+        val channels = channelCount.coerceIn(1, 2)
+
+        try {
+            val aacFormat = MediaFormat.createAudioFormat("audio/mp4a-latm", rate, channels).apply {
+                setInteger(MediaFormat.KEY_AAC_PROFILE, MediaCodecInfo.CodecProfileLevel.AACObjectLC)
+                setInteger(MediaFormat.KEY_BIT_RATE, if (channels == 1) 64_000 else 128_000)
+                setInteger(MediaFormat.KEY_MAX_INPUT_SIZE, 16384)
+            }
+
+            encoder = MediaCodec.createEncoderByType("audio/mp4a-latm")
+            encoder.configure(aacFormat, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE)
+            encoder.start()
+
+            muxer = MediaMuxer(aacOutputFile.absolutePath, MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4)
+            var audioTrackIndex = -1
+
+            fis = FileInputStream(pcmFile)
+            val frameSize = 1024 * channels * 2
+            val pcmChunk = ByteArray(frameSize)
+
+            val timeoutUs = 10_000L
+            val bufferInfo = MediaCodec.BufferInfo()
+            var inputEos = false
+            var outputEos = false
+            var presentationTimeUs = 0L
+
+            var idleCount = 0
+            val maxIdle = 500
+
+            while (!outputEos && idleCount < maxIdle) {
+                if (isCancelled()) return false
+                var progressMade = false
+
+                // 1. Masukkan PCM ke Encoder
+                if (!inputEos) {
+                    val inIndex = encoder.dequeueInputBuffer(timeoutUs)
+                    if (inIndex >= 0) {
+                        val inBuffer = encoder.getInputBuffer(inIndex)
+                        if (inBuffer != null) {
+                            inBuffer.clear()
+                            val bytesToRead = minOf(frameSize, inBuffer.remaining())
+                            val bytesRead = fis.read(pcmChunk, 0, bytesToRead)
+                            if (bytesRead <= 0) {
+                                encoder.queueInputBuffer(inIndex, 0, 0, presentationTimeUs, MediaCodec.BUFFER_FLAG_END_OF_STREAM)
+                                inputEos = true
+                            } else {
+                                inBuffer.put(pcmChunk, 0, bytesRead)
+                                encoder.queueInputBuffer(inIndex, 0, bytesRead, presentationTimeUs, 0)
+                                presentationTimeUs += (bytesRead.toLong() * 1_000_000L) / (rate * channels * 2L)
+                            }
+                            progressMade = true
+                        }
+                    }
+                }
+
+                // 2. Ambil paket AAC dari Encoder dan tulis ke MediaMuxer
+                val outIndex = encoder.dequeueOutputBuffer(bufferInfo, timeoutUs)
+                if (outIndex >= 0) {
+                    progressMade = true
+                    if ((bufferInfo.flags and MediaCodec.BUFFER_FLAG_CODEC_CONFIG) != 0) {
+                        bufferInfo.size = 0
+                    }
+                    if (bufferInfo.size > 0 && muxerStarted) {
+                        val outBuffer = encoder.getOutputBuffer(outIndex)
+                        if (outBuffer != null) {
+                            outBuffer.position(bufferInfo.offset)
+                            outBuffer.limit(bufferInfo.offset + bufferInfo.size)
+                            muxer.writeSampleData(audioTrackIndex, outBuffer, bufferInfo)
+                        }
+                    }
+                    encoder.releaseOutputBuffer(outIndex, false)
+                    if ((bufferInfo.flags and MediaCodec.BUFFER_FLAG_END_OF_STREAM) != 0) {
+                        outputEos = true
+                        break
+                    }
+                } else if (outIndex == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED) {
+                    progressMade = true
+                    if (!muxerStarted) {
+                        audioTrackIndex = muxer.addTrack(encoder.outputFormat)
+                        muxer.start()
+                        muxerStarted = true
+                    }
+                }
+
+                if (progressMade) {
+                    idleCount = 0
+                } else {
+                    idleCount++
+                }
+            }
+
+            return aacOutputFile.exists() && aacOutputFile.length() > 0L
+        } catch (e: Exception) {
+            e.printStackTrace()
+            return false
+        } finally {
+            try { fis?.close() } catch (_: Exception) {}
+            try { encoder?.stop() } catch (_: Exception) {}
+            try { encoder?.release() } catch (_: Exception) {}
+            if (muxerStarted) {
+                try { muxer?.stop() } catch (_: Exception) {}
+                try { muxer?.release() } catch (_: Exception) {}
+            }
         }
     }
 
@@ -136,12 +455,12 @@ class SlideshowVideoGenerator(
         destinationFile: File,
         isCancelled: () -> Boolean
     ): Boolean {
-        // Prioritas 1: media.videoUrl (MP4 TikTok yang berisi trek AAC resmi)
-        // Prioritas 2: media.musicUrl
+        // Prioritas 1: media.musicUrl (Audio MP3 asli TikTok)
+        // Prioritas 2: media.videoUrl (Stream MP4 TikTok)
         // Prioritas 3: media.previewUrl
         val candidates = listOfNotNull(
-            media.videoUrl.takeIf { it.isNotBlank() },
             media.musicUrl.takeIf { !it.isNullOrBlank() },
+            media.videoUrl.takeIf { it.isNotBlank() },
             media.previewUrl.takeIf { !it.isNullOrBlank() }
         ).distinct()
 
