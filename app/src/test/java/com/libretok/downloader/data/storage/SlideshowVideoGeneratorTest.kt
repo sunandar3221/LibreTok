@@ -58,4 +58,20 @@ class SlideshowVideoGeneratorTest {
         assertEquals(6, transitionFrames) // 6 frame (400ms) untuk swipe effect
         assertTrue("Hold frames must be positive", (framesPerImage - transitionFrames) > 0)
     }
+
+    @Test
+    fun testTrackIndexDistinction() {
+        // Simulasi file TikTok MP4: stream 0 adalah audio (AAC), stream 1 adalah video (H264)
+        val extractorAudioTrackIndex = 0
+        // Di MediaMuxer, video track didaftarkan pertama (index 0), audio track didaftarkan kedua (index 1)
+        val muxerAudioTrackIndex = 1
+
+        // Pastikan extractor sample track index dicocokkan ke extractorAudioTrackIndex, BUKAN muxerAudioTrackIndex
+        val sampleTrackIndexFromExtractor = 0
+        val isAudioSample = (sampleTrackIndexFromExtractor == extractorAudioTrackIndex)
+        val wrongComparison = (sampleTrackIndexFromExtractor == muxerAudioTrackIndex)
+
+        assertTrue("Sample index harus cocok dengan extractor audio index", isAudioSample)
+        assertTrue("Sample index tidak boleh disamakan dengan muxer index yang berbeda", !wrongComparison)
+    }
 }

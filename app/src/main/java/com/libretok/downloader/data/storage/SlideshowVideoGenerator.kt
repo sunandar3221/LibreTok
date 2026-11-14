@@ -456,14 +456,17 @@ class SlideshowVideoGenerator(
                 throw Exception("Track video tidak ditemukan dalam berkas")
             }
 
-            var audioTrackIndex = -1
+            var extractorAudioTrackIndex = -1
+            var muxerAudioTrackIndex = -1
+
             for (i in 0 until audioExtractor.trackCount) {
                 val format = audioExtractor.getTrackFormat(i)
                 val mime = format.getString(MediaFormat.KEY_MIME) ?: ""
                 if (mime.startsWith("audio/")) {
                     audioExtractor.selectTrack(i)
+                    extractorAudioTrackIndex = i
                     try {
-                        audioTrackIndex = muxer.addTrack(format)
+                        muxerAudioTrackIndex = muxer.addTrack(format)
                     } catch (e: Exception) {
                         e.printStackTrace()
                     }
@@ -477,16 +480,16 @@ class SlideshowVideoGenerator(
             val bufferInfo = MediaCodec.BufferInfo()
 
             var videoDone = false
-            var audioDone = (audioTrackIndex == -1)
+            var audioDone = (extractorAudioTrackIndex == -1 || muxerAudioTrackIndex == -1)
 
-            // Lompat melewati frame non-audio (misal dummy video) sampai ke sample audio pertama
+            // Lompat melewati frame non-audio (misal dummy video) sampai ke sample audio berikutnya
             fun advanceAudioToNextAudioSample() {
                 while (!audioDone) {
                     val trackIdx = audioExtractor.sampleTrackIndex
                     if (trackIdx == -1) {
                         audioDone = true
                         break
-                    } else if (trackIdx == audioTrackIndex) {
+                    } else if (trackIdx == extractorAudioTrackIndex) {
                         break
                     } else {
                         audioExtractor.advance()
@@ -529,7 +532,7 @@ class SlideshowVideoGenerator(
                         bufferInfo.size = sampleSize
                         bufferInfo.presentationTimeUs = audioSampleTime
                         bufferInfo.flags = audioExtractor.sampleFlags
-                        muxer.writeSampleData(audioTrackIndex, buffer, bufferInfo)
+                        muxer.writeSampleData(muxerAudioTrackIndex, buffer, bufferInfo)
                         audioExtractor.advance()
                         advanceAudioToNextAudioSample()
                     } else {
