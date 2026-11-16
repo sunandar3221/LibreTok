@@ -199,7 +199,7 @@ class DownloadManager(
                 when {
                     host.contains("tikwm.com") -> requestBuilder.header("Referer", "https://www.tikwm.com/")
                     host.contains("tiktok.com") -> requestBuilder.header("Referer", "https://www.tiktok.com/")
-                    host.contains("googlevideo.com") -> requestBuilder.header("User-Agent", "com.google.android.youtube/21.26.364 (Linux; U; Android 11)")
+                    host.contains("googlevideo.com") -> requestBuilder.header("User-Agent", "com.google.ios.youtube/20.10.4 (iPhone16,2; U; CPU iOS 18_3_2 like Mac OS X; en_US)")
                 }
 
                 val response = client.newCall(requestBuilder.build()).execute()
@@ -785,19 +785,34 @@ class DownloadManager(
             return
         }
 
-        // Chunked Range downloader untuk GoogleVideo adaptive streams (mencegah HTTP 403)
+        // Chunked Range downloader untuk GoogleVideo adaptive streams (mencegah throttling & HTTP 403)
         var downloaded = 0L
-        val maxChunk = 1024 * 1024L // 1 MB per chunk
-        var currChunk = maxChunk
-        val totalExpected = if (totalBytesEstimated > 0) totalBytesEstimated else 10_000_000L
+        val chunkSize = 2 * 1024 * 1024L // 2 MB per chunk
+        val clenFromUrl = try { Uri.parse(url).getQueryParameter("clen")?.toLongOrNull() } catch (_: Exception) { null }
+        var totalLength: Long? = clenFromUrl ?: (if (totalBytesEstimated > 0) totalBytesEstimated else null)
+
+        val buffer = ByteArray(32 * 1024)
 
         FileOutputStream(destinationFile).use { outStream ->
+            var consecutiveRetries = 0
+            val maxRetries = 5
+
             while (true) {
                 if (cancelledTasks[downloadId] == true) {
                     throw Exception("Unduhan dibatalkan")
                 }
 
-                val rangeHeader = "bytes=$downloaded-${downloaded + currChunk - 1}"
+                if (totalLength != null && downloaded >= totalLength!!) {
+                    break
+                }
+
+                val targetEnd = if (totalLength != null) {
+                    minOf(downloaded + chunkSize - 1, totalLength!! - 1)
+                } else {
+                    downloaded + chunkSize - 1
+                }
+
+                val rangeHeader = "bytes=$downloaded-$targetEnd"
                 val req = Request.Builder()
                     .url(url)
                     .header("User-Agent", ua)
@@ -807,56 +822,82 @@ class DownloadManager(
 
                 try {
                     val resp = client.newCall(req).execute()
-                    if (resp.code == 206) {
-                        val body = resp.body ?: break
-                        val bytes = body.bytes()
-                        if (bytes.isEmpty()) break
-                        outStream.write(bytes)
-                        downloaded += bytes.size
-                        onBytesCopied(downloaded)
+                    val code = resp.code
 
-                        val prog = (downloaded.toFloat() / totalExpected.toFloat()).coerceIn(0f, 1f)
-                        updateActiveDownload(
-                            ActiveDownload(
-                                id = downloadId,
-                                title = mediaTitle,
-                                type = type,
-                                progress = progressBase + (prog * progressScale),
-                                bytesDownloaded = downloaded,
-                                totalBytes = maxOf(totalExpected, downloaded),
-                                status = DownloadStatus.DOWNLOADING
+                    if (code == 206 || code == 200) {
+                        val crHeader = resp.header("Content-Range")
+                        if (crHeader != null && crHeader.contains("/")) {
+                            val parsedTotal = crHeader.substringAfterLast("/").trim().toLongOrNull()
+                            if (parsedTotal != null && parsedTotal > 0L) {
+                                totalLength = parsedTotal
+                            }
+                        }
+
+                        val body = resp.body ?: throw Exception("Badan respon kosong dari GoogleVideo (HTTP $code)")
+                        var bytesInThisCall = 0L
+                        val stream = body.byteStream()
+                        var nRead: Int
+                        while (stream.read(buffer).also { nRead = it } != -1) {
+                            if (cancelledTasks[downloadId] == true) {
+                                throw Exception("Unduhan dibatalkan")
+                            }
+                            outStream.write(buffer, 0, nRead)
+                            downloaded += nRead
+                            bytesInThisCall += nRead
+                            onBytesCopied(downloaded)
+
+                            val totalExpected = totalLength ?: maxOf(downloaded, 15_000_000L)
+                            val prog = (downloaded.toFloat() / totalExpected.toFloat()).coerceIn(0f, 1f)
+                            updateActiveDownload(
+                                ActiveDownload(
+                                    id = downloadId,
+                                    title = mediaTitle,
+                                    type = type,
+                                    progress = progressBase + (prog * progressScale),
+                                    bytesDownloaded = downloaded,
+                                    totalBytes = totalExpected,
+                                    status = DownloadStatus.DOWNLOADING
+                                )
                             )
-                        )
-
-                        if (currChunk < maxChunk) {
-                            currChunk = minOf(currChunk * 2, maxChunk)
                         }
 
-                        if (bytes.size < currChunk) {
+                        consecutiveRetries = 0
+
+                        if (code == 200) {
                             break
                         }
-                    } else if (resp.code == 403 || resp.code == 416) {
-                        if (currChunk > 8192) {
-                            currChunk /= 2
-                        } else if (downloaded > 0) {
+
+                        if (bytesInThisCall == 0L) {
                             break
-                        } else {
-                            throw Exception("Server menolak akses track GoogleVideo (HTTP ${resp.code})")
                         }
+                    } else if (code == 416) {
+                        // HTTP 416: Range Not Satisfiable -> Berarti seluruh track telah tuntas diunduh
+                        break
                     } else {
-                        if (downloaded > 0) break
-                        throw Exception("Gagal mengunduh track GoogleVideo (HTTP ${resp.code})")
+                        consecutiveRetries++
+                        if (consecutiveRetries > maxRetries) {
+                            throw Exception("Server menolak akses track GoogleVideo setelah $maxRetries percobaan (HTTP $code)")
+                        }
+                        try { Thread.sleep(500L * consecutiveRetries) } catch (_: Exception) {}
                     }
                 } catch (e: Exception) {
                     if (cancelledTasks[downloadId] == true) throw e
-                    if (downloaded > 0) break
-                    throw e
+                    consecutiveRetries++
+                    if (consecutiveRetries > maxRetries) {
+                        throw Exception("Gagal mengunduh track GoogleVideo setelah $maxRetries percobaan: ${e.message}")
+                    }
+                    try { Thread.sleep(500L * consecutiveRetries) } catch (_: Exception) {}
                 }
             }
+            outStream.flush()
         }
 
         if (downloaded <= 0L) {
             throw Exception("Track GoogleVideo kosong (0 bytes diterima)")
+        }
+
+        if (totalLength != null && downloaded < totalLength!!) {
+            throw Exception("Unduhan video belum selesai ($downloaded dari $totalLength byte). Silakan coba lagi.")
         }
     }
 
@@ -871,22 +912,26 @@ class DownloadManager(
             muxer = MediaMuxer(outputFile.absolutePath, MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4)
 
             var videoTrackIndex = -1
+            var extractorVideoTrackIndex = -1
             for (i in 0 until videoExtractor.trackCount) {
                 val format = videoExtractor.getTrackFormat(i)
                 val mime = format.getString(MediaFormat.KEY_MIME) ?: ""
                 if (mime.startsWith("video/")) {
                     videoExtractor.selectTrack(i)
+                    extractorVideoTrackIndex = i
                     videoTrackIndex = muxer.addTrack(format)
                     break
                 }
             }
 
             var audioTrackIndex = -1
+            var extractorAudioTrackIndex = -1
             for (i in 0 until audioExtractor.trackCount) {
                 val format = audioExtractor.getTrackFormat(i)
                 val mime = format.getString(MediaFormat.KEY_MIME) ?: ""
                 if (mime.startsWith("audio/")) {
                     audioExtractor.selectTrack(i)
+                    extractorAudioTrackIndex = i
                     audioTrackIndex = muxer.addTrack(format)
                     break
                 }
@@ -901,27 +946,77 @@ class DownloadManager(
             val buffer = ByteBuffer.allocate(1024 * 1024)
             val bufferInfo = MediaCodec.BufferInfo()
 
-            while (true) {
-                val sampleSize = videoExtractor.readSampleData(buffer, 0)
-                if (sampleSize < 0) break
-                bufferInfo.offset = 0
-                bufferInfo.size = sampleSize
-                bufferInfo.presentationTimeUs = videoExtractor.sampleTime
-                bufferInfo.flags = videoExtractor.sampleFlags
-                muxer.writeSampleData(videoTrackIndex, buffer, bufferInfo)
-                videoExtractor.advance()
+            var videoDone = false
+            var audioDone = (audioTrackIndex == -1)
+
+            fun advanceAudioToNextAudioSample() {
+                while (!audioDone) {
+                    val trackIdx = audioExtractor.sampleTrackIndex
+                    if (trackIdx == -1) {
+                        audioDone = true
+                        break
+                    } else if (trackIdx == extractorAudioTrackIndex) {
+                        break
+                    } else {
+                        audioExtractor.advance()
+                    }
+                }
             }
 
-            if (audioTrackIndex != -1) {
-                while (true) {
+            fun advanceVideoToNextVideoSample() {
+                while (!videoDone) {
+                    val trackIdx = videoExtractor.sampleTrackIndex
+                    if (trackIdx == -1) {
+                        videoDone = true
+                        break
+                    } else if (trackIdx == extractorVideoTrackIndex) {
+                        break
+                    } else {
+                        videoExtractor.advance()
+                    }
+                }
+            }
+
+            advanceAudioToNextAudioSample()
+            advanceVideoToNextVideoSample()
+
+            // Interleaved sample writing agar timestamps teratur dan video tidak freeze/stutter di akhir
+            while (!videoDone || !audioDone) {
+                advanceAudioToNextAudioSample()
+                advanceVideoToNextVideoSample()
+
+                val videoSampleTime = if (!videoDone) videoExtractor.sampleTime else -1L
+                val audioSampleTime = if (!audioDone) audioExtractor.sampleTime else -1L
+
+                if (videoSampleTime < 0L) videoDone = true
+                if (audioSampleTime < 0L) audioDone = true
+
+                if (videoDone && audioDone) break
+
+                if (!videoDone && (audioDone || videoSampleTime <= audioSampleTime)) {
+                    val sampleSize = videoExtractor.readSampleData(buffer, 0)
+                    if (sampleSize >= 0) {
+                        bufferInfo.offset = 0
+                        bufferInfo.size = sampleSize
+                        bufferInfo.presentationTimeUs = videoSampleTime
+                        bufferInfo.flags = videoExtractor.sampleFlags
+                        muxer.writeSampleData(videoTrackIndex, buffer, bufferInfo)
+                        videoExtractor.advance()
+                    } else {
+                        videoDone = true
+                    }
+                } else if (!audioDone) {
                     val sampleSize = audioExtractor.readSampleData(buffer, 0)
-                    if (sampleSize < 0) break
-                    bufferInfo.offset = 0
-                    bufferInfo.size = sampleSize
-                    bufferInfo.presentationTimeUs = audioExtractor.sampleTime
-                    bufferInfo.flags = audioExtractor.sampleFlags
-                    muxer.writeSampleData(audioTrackIndex, buffer, bufferInfo)
-                    audioExtractor.advance()
+                    if (sampleSize >= 0) {
+                        bufferInfo.offset = 0
+                        bufferInfo.size = sampleSize
+                        bufferInfo.presentationTimeUs = audioSampleTime
+                        bufferInfo.flags = audioExtractor.sampleFlags
+                        muxer.writeSampleData(audioTrackIndex, buffer, bufferInfo)
+                        audioExtractor.advance()
+                    } else {
+                        audioDone = true
+                    }
                 }
             }
         } finally {

@@ -55,4 +55,30 @@ class TikTokApiServiceTest {
         assertTrue("videoUrl must point to googlevideo.com", media?.videoUrl?.contains("googlevideo.com") == true)
         assertTrue("coverUrl must not be blank", media?.coverUrl?.isNotBlank() == true)
     }
+
+    @Test
+    fun testContentRangeHeaderParsing() {
+        val crHeader = "bytes 0-2097151/26455880"
+        val totalLength = crHeader.substringAfterLast("/").trim().toLongOrNull()
+        assertEquals(26455880L, totalLength)
+
+        val crHeaderAsterisk = "bytes 0-1000/*"
+        val asteriskTotal = crHeaderAsterisk.substringAfterLast("/").trim().toLongOrNull()
+        assertEquals(null, asteriskTotal)
+    }
+
+    @Test
+    fun testChunkRangeTargetCalculation() {
+        val totalLength = 26455880L
+        val chunkSize = 2 * 1024 * 1024L // 2MB = 2097152
+
+        var downloaded = 0L
+        val targetEnd0 = minOf(downloaded + chunkSize - 1, totalLength - 1)
+        assertEquals(2097151L, targetEnd0)
+
+        // Near the end
+        downloaded = 26000000L
+        val targetEndLast = minOf(downloaded + chunkSize - 1, totalLength - 1)
+        assertEquals(totalLength - 1, targetEndLast)
+    }
 }
