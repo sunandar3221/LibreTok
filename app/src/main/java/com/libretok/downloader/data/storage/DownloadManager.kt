@@ -85,7 +85,7 @@ class DownloadManager(
         // Jika adaptive stream (seperti YouTube 1080p/720p/480p), unduh video + audio lalu gabungkan dengan MediaMuxer
         if ((type == DownloadType.VIDEO || type == DownloadType.HD_VIDEO) && media.isAdaptiveStream && !media.musicUrl.isNullOrBlank()) {
             val adaptiveResult = downloadAndMuxAdaptiveMedia(media, type, customFileName, downloadId)
-            if (adaptiveResult.isSuccess) {
+            if (adaptiveResult.isSuccess || type == DownloadType.HD_VIDEO) {
                 return@withContext adaptiveResult
             }
         }
@@ -762,24 +762,25 @@ class DownloadManager(
 
         if (!isGoogleVideo) {
             val req = Request.Builder().url(url).header("User-Agent", ua).header("Accept", "*/*").build()
-            val resp = client.newCall(req).execute()
-            if (!resp.isSuccessful) throw Exception("Server menolak unduhan track (HTTP ${resp.code})")
-            val body = resp.body ?: throw Exception("Konten track kosong")
-            val total = body.contentLength()
-            FileOutputStream(destinationFile).use { outStream ->
-                copyStream(downloadId, body.byteStream(), outStream, total) { prog, copied ->
-                    onBytesCopied(copied)
-                    updateActiveDownload(
-                        ActiveDownload(
-                            id = downloadId,
-                            title = mediaTitle,
-                            type = type,
-                            progress = progressBase + (prog * progressScale),
-                            bytesDownloaded = copied,
-                            totalBytes = if (total > 0) total else copied,
-                            status = DownloadStatus.DOWNLOADING
+            client.newCall(req).execute().use { resp ->
+                if (!resp.isSuccessful) throw Exception("Server menolak unduhan track (HTTP ${resp.code})")
+                val body = resp.body ?: throw Exception("Konten track kosong")
+                val total = body.contentLength()
+                FileOutputStream(destinationFile).use { outStream ->
+                    copyStream(downloadId, body.byteStream(), outStream, total) { prog, copied ->
+                        onBytesCopied(copied)
+                        updateActiveDownload(
+                            ActiveDownload(
+                                id = downloadId,
+                                title = mediaTitle,
+                                type = type,
+                                progress = progressBase + (prog * progressScale),
+                                bytesDownloaded = copied,
+                                totalBytes = if (total > 0) total else copied,
+                                status = DownloadStatus.DOWNLOADING
+                            )
                         )
-                    )
+                    }
                 }
             }
             return
@@ -787,11 +788,12 @@ class DownloadManager(
 
         // Chunked Range downloader untuk GoogleVideo adaptive streams (mencegah throttling & HTTP 403)
         var downloaded = 0L
-        val chunkSize = 2 * 1024 * 1024L // 2 MB per chunk
+        val chunkSize = 3 * 1024 * 1024L // 3 MB per chunk
         val clenFromUrl = try { Uri.parse(url).getQueryParameter("clen")?.toLongOrNull() } catch (_: Exception) { null }
         var totalLength: Long? = clenFromUrl ?: (if (totalBytesEstimated > 0) totalBytesEstimated else null)
 
-        val buffer = ByteArray(32 * 1024)
+        val buffer = ByteArray(64 * 1024)
+        var lastProgressUpdate = 0L
 
         FileOutputStream(destinationFile).use { outStream ->
             var consecutiveRetries = 0
@@ -820,65 +822,68 @@ class DownloadManager(
                     .header("Accept", "*/*")
                     .build()
 
+                var isFinished = false
+
                 try {
-                    val resp = client.newCall(req).execute()
-                    val code = resp.code
+                    client.newCall(req).execute().use { resp ->
+                        val code = resp.code
 
-                    if (code == 206 || code == 200) {
-                        val crHeader = resp.header("Content-Range")
-                        if (crHeader != null && crHeader.contains("/")) {
-                            val parsedTotal = crHeader.substringAfterLast("/").trim().toLongOrNull()
-                            if (parsedTotal != null && parsedTotal > 0L) {
-                                totalLength = parsedTotal
+                        if (code == 206 || code == 200) {
+                            val crHeader = resp.header("Content-Range")
+                            if (crHeader != null && crHeader.contains("/")) {
+                                val parsedTotal = crHeader.substringAfterLast("/").trim().toLongOrNull()
+                                if (parsedTotal != null && parsedTotal > 0L) {
+                                    totalLength = parsedTotal
+                                }
                             }
-                        }
 
-                        val body = resp.body ?: throw Exception("Badan respon kosong dari GoogleVideo (HTTP $code)")
-                        var bytesInThisCall = 0L
-                        val stream = body.byteStream()
-                        var nRead: Int
-                        while (stream.read(buffer).also { nRead = it } != -1) {
-                            if (cancelledTasks[downloadId] == true) {
-                                throw Exception("Unduhan dibatalkan")
+                            val body = resp.body ?: throw Exception("Badan respon kosong dari GoogleVideo (HTTP $code)")
+                            var bytesInThisCall = 0L
+                            val stream = body.byteStream()
+                            var nRead: Int
+                            while (stream.read(buffer).also { nRead = it } != -1) {
+                                if (cancelledTasks[downloadId] == true) {
+                                    throw Exception("Unduhan dibatalkan")
+                                }
+                                outStream.write(buffer, 0, nRead)
+                                downloaded += nRead
+                                bytesInThisCall += nRead
+                                onBytesCopied(downloaded)
+
+                                val now = System.currentTimeMillis()
+                                if (now - lastProgressUpdate > 200) {
+                                    lastProgressUpdate = now
+                                    val totalExpected = totalLength ?: maxOf(downloaded, 15_000_000L)
+                                    val prog = (downloaded.toFloat() / totalExpected.toFloat()).coerceIn(0f, 1f)
+                                    updateActiveDownload(
+                                        ActiveDownload(
+                                            id = downloadId,
+                                            title = mediaTitle,
+                                            type = type,
+                                            progress = progressBase + (prog * progressScale),
+                                            bytesDownloaded = downloaded,
+                                            totalBytes = totalExpected,
+                                            status = DownloadStatus.DOWNLOADING
+                                        )
+                                    )
+                                }
                             }
-                            outStream.write(buffer, 0, nRead)
-                            downloaded += nRead
-                            bytesInThisCall += nRead
-                            onBytesCopied(downloaded)
 
-                            val totalExpected = totalLength ?: maxOf(downloaded, 15_000_000L)
-                            val prog = (downloaded.toFloat() / totalExpected.toFloat()).coerceIn(0f, 1f)
-                            updateActiveDownload(
-                                ActiveDownload(
-                                    id = downloadId,
-                                    title = mediaTitle,
-                                    type = type,
-                                    progress = progressBase + (prog * progressScale),
-                                    bytesDownloaded = downloaded,
-                                    totalBytes = totalExpected,
-                                    status = DownloadStatus.DOWNLOADING
-                                )
-                            )
-                        }
+                            consecutiveRetries = 0
 
-                        consecutiveRetries = 0
-
-                        if (code == 200) {
-                            break
+                            if (code == 200 || bytesInThisCall == 0L) {
+                                isFinished = true
+                            }
+                        } else if (code == 416) {
+                            // HTTP 416: Range Not Satisfiable -> Berarti seluruh track telah tuntas diunduh
+                            isFinished = true
+                        } else {
+                            consecutiveRetries++
+                            if (consecutiveRetries > maxRetries) {
+                                throw Exception("Server menolak akses track GoogleVideo setelah $maxRetries percobaan (HTTP $code)")
+                            }
+                            try { Thread.sleep(500L * consecutiveRetries) } catch (_: Exception) {}
                         }
-
-                        if (bytesInThisCall == 0L) {
-                            break
-                        }
-                    } else if (code == 416) {
-                        // HTTP 416: Range Not Satisfiable -> Berarti seluruh track telah tuntas diunduh
-                        break
-                    } else {
-                        consecutiveRetries++
-                        if (consecutiveRetries > maxRetries) {
-                            throw Exception("Server menolak akses track GoogleVideo setelah $maxRetries percobaan (HTTP $code)")
-                        }
-                        try { Thread.sleep(500L * consecutiveRetries) } catch (_: Exception) {}
                     }
                 } catch (e: Exception) {
                     if (cancelledTasks[downloadId] == true) throw e
@@ -888,9 +893,27 @@ class DownloadManager(
                     }
                     try { Thread.sleep(500L * consecutiveRetries) } catch (_: Exception) {}
                 }
+
+                if (isFinished) {
+                    break
+                }
             }
             outStream.flush()
         }
+
+        val totalExpected = totalLength ?: downloaded
+        val finalProg = if (totalExpected > 0) (downloaded.toFloat() / totalExpected.toFloat()).coerceIn(0f, 1f) else 1f
+        updateActiveDownload(
+            ActiveDownload(
+                id = downloadId,
+                title = mediaTitle,
+                type = type,
+                progress = progressBase + (finalProg * progressScale),
+                bytesDownloaded = downloaded,
+                totalBytes = totalExpected,
+                status = DownloadStatus.DOWNLOADING
+            )
+        )
 
         if (downloaded <= 0L) {
             throw Exception("Track GoogleVideo kosong (0 bytes diterima)")
