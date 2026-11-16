@@ -17,6 +17,7 @@ import com.libretok.downloader.data.model.DownloadItem
 import com.libretok.downloader.data.model.DownloadStatus
 import com.libretok.downloader.data.model.DownloadType
 import com.libretok.downloader.data.model.TikTokMedia
+import com.libretok.downloader.data.network.YouTubeHeadlessParser
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -36,6 +37,7 @@ import java.util.concurrent.TimeUnit
 class DownloadManager(
     private val context: Context,
     private val historyRepository: HistoryRepository,
+    private val settingsManager: SettingsManager? = null,
     private val client: OkHttpClient = OkHttpClient.Builder()
         .connectTimeout(30, TimeUnit.SECONDS)
         .readTimeout(120, TimeUnit.SECONDS)
@@ -51,6 +53,7 @@ class DownloadManager(
 
     private val cancelledTasks = ConcurrentHashMap<String, Boolean>()
     private val slideshowGenerator = SlideshowVideoGenerator(context, client)
+    private val headlessParser = YouTubeHeadlessParser(context, client)
 
     private fun sanitizeFilename(name: String): String {
         return name.replace(Regex("[^a-zA-Z0-9.\\-_ ]"), "_")
@@ -83,7 +86,11 @@ class DownloadManager(
         }
 
         // Jika adaptive stream (seperti YouTube 1080p/720p/480p), unduh video + audio lalu gabungkan dengan MediaMuxer
-        if ((type == DownloadType.VIDEO || type == DownloadType.HD_VIDEO) && media.isAdaptiveStream && !media.musicUrl.isNullOrBlank()) {
+        val isAdaptiveDownload = (type == DownloadType.HD_VIDEO || (type == DownloadType.VIDEO && media.isAdaptiveStream)) &&
+                !media.musicUrl.isNullOrBlank() &&
+                (!media.hdVideoUrl.isNullOrBlank() || media.videoUrl.isNotBlank())
+
+        if (isAdaptiveDownload) {
             val adaptiveResult = downloadAndMuxAdaptiveMedia(media, type, customFileName, downloadId)
             if (adaptiveResult.isSuccess || type == DownloadType.HD_VIDEO) {
                 return@withContext adaptiveResult
@@ -391,12 +398,63 @@ class DownloadManager(
         customFileName: String?,
         downloadId: String
     ): Result<DownloadItem> = withContext(Dispatchers.IO) {
-        val targetVideoUrl = if (type == DownloadType.HD_VIDEO && !media.hdVideoUrl.isNullOrBlank()) {
+        val isLongYouTube = media.platform == "YouTube" && media.duration > 65
+        val isHeadlessEnabled = settingsManager?.isLongYouTubeHdEnabled?.value == true
+
+        var targetVideoUrl = if (type == DownloadType.HD_VIDEO && !media.hdVideoUrl.isNullOrBlank()) {
             media.hdVideoUrl
         } else {
             media.videoUrl
         }
-        val targetAudioUrl = media.musicUrl ?: return@withContext Result.failure(Exception("Audio URL tidak ditemukan"))
+        var targetAudioUrl = media.musicUrl ?: return@withContext Result.failure(Exception("Audio URL tidak ditemukan"))
+
+        if (isLongYouTube && type == DownloadType.HD_VIDEO) {
+            if (!isHeadlessEnabled) {
+                val msg = "YouTube membatasi unduhan HD untuk video berdurasi lebih dari 1 menit (anti-bot 403). Aktifkan 'Parser YouTube HD Panjang' di Pengaturan, atau gunakan tombol 'Download Video' standar (360p)."
+                updateActiveDownload(
+                    ActiveDownload(
+                        id = downloadId,
+                        title = media.title,
+                        type = type,
+                        status = DownloadStatus.FAILED,
+                        errorMessage = msg
+                    )
+                )
+                return@withContext Result.failure(Exception(msg))
+            } else {
+                updateActiveDownload(
+                    ActiveDownload(
+                        id = downloadId,
+                        title = media.title,
+                        type = type,
+                        progress = 0.05f,
+                        status = DownloadStatus.DOWNLOADING
+                    )
+                )
+
+                val customServer = settingsManager?.customPoTokenServer?.value?.ifBlank { null }
+                val parsed = headlessParser.extractLongVideoStreams(media.id, customServer)
+
+                if (parsed?.videoUrl != null) {
+                    targetVideoUrl = parsed.videoUrl
+                    if (!parsed.audioUrl.isNullOrBlank()) {
+                        targetAudioUrl = parsed.audioUrl
+                    }
+                } else {
+                    val msg = "Gagal mengekstrak stream YouTube HD via Parser. Silakan gunakan tombol 'Download Video' standar (360p) untuk video ini."
+                    updateActiveDownload(
+                        ActiveDownload(
+                            id = downloadId,
+                            title = media.title,
+                            type = type,
+                            status = DownloadStatus.FAILED,
+                            errorMessage = msg
+                        )
+                    )
+                    return@withContext Result.failure(Exception(msg))
+                }
+            }
+        }
 
         val baseTitle = if (!customFileName.isNullOrBlank()) {
             sanitizeFilename(customFileName)
@@ -877,6 +935,8 @@ class DownloadManager(
                         } else if (code == 416) {
                             // HTTP 416: Range Not Satisfiable -> Berarti seluruh track telah tuntas diunduh
                             isFinished = true
+                        } else if (code == 403) {
+                            throw Exception("Server YouTube menolak akses track HD (HTTP 403 Forbidden). Unduhan HD untuk video berdurasi panjang dibatasi oleh YouTube. Silakan gunakan tombol 'Download Video' standar.")
                         } else {
                             consecutiveRetries++
                             if (consecutiveRetries > maxRetries) {

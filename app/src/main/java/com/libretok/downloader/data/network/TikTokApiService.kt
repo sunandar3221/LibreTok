@@ -521,10 +521,16 @@ class TikTokApiService(
                 allAudioFormats.firstOrNull()
             }
 
+            val details = playerResp.videoDetails ?: androidResp?.videoDetails
+            val duration = details?.lengthSeconds?.toIntOrNull() ?: 0
+            val isLongYouTubeVideo = duration > 65
+
             var chosenFormat: InnertubeFormat? = null
             var isAdaptive = false
 
-            if (targetRes == "360" && progressiveFormat != null) {
+            if ((targetRes == "360" || isLongYouTubeVideo) && progressiveFormat != null) {
+                // Untuk video YouTube > 60 detik, YouTube CDN membatasi adaptive stream dengan HTTP 403.
+                // Gunakan progressiveFormat 360p langsung agar video terunduh penuh tanpa putus/error.
                 chosenFormat = progressiveFormat
                 isAdaptive = false
             } else {
@@ -551,11 +557,12 @@ class TikTokApiService(
                 return@withContext Result.failure(Exception("Format video YouTube tidak tersedia untuk diunduh"))
             }
 
-            val hdFormat = mp4Videos.firstOrNull { it.qualityLabel == "1080p" }
+            val hdFormat = mp4Videos.firstOrNull { it.qualityLabel?.startsWith("1080p") == true }
+                ?: mp4Videos.firstOrNull { it.qualityLabel?.startsWith("720p") == true }
+                ?: chosenFormat
             val hdVideoUrl = hdFormat?.url ?: chosenFormat?.url
 
             val ytOEmbed = oEmbedDeferred.await()
-            val details = playerResp.videoDetails ?: androidResp?.videoDetails
             val title = ytOEmbed?.title?.ifBlank { null }
                 ?: details?.title?.ifBlank { null }
                 ?: "YouTube Video"
@@ -570,9 +577,6 @@ class TikTokApiService(
 
             val coverUrl = ytOEmbed?.thumbnailUrl
                 ?: "https://i.ytimg.com/vi/$videoId/hqdefault.jpg"
-
-            val duration = details?.lengthSeconds?.toIntOrNull()
-                ?: ((chosenFormat?.approxDurationMs?.toLongOrNull() ?: 0L) / 1000L).toInt()
 
             val videoBytes = chosenFormat?.contentLength?.toLongOrNull() ?: 0L
             val audioBytes = if (isAdaptive) (selectedAudioFormat?.contentLength?.toLongOrNull() ?: 0L) else 0L

@@ -57,6 +57,7 @@ fun HomeScreen(
 
     val askRename by viewModel.settingsManager.askRenameBeforeDownload.collectAsState()
     val isAutoResolution by viewModel.settingsManager.isAutoResolution.collectAsState()
+    val isLongYouTubeHdEnabled by viewModel.settingsManager.isLongYouTubeHdEnabled.collectAsState()
     val batchQueue by viewModel.batchQueue.collectAsState()
     val isBatchRunning by viewModel.isBatchRunning.collectAsState()
 
@@ -582,6 +583,7 @@ fun HomeScreen(
                     activeDownloads = activeDownloads,
                     askRename = askRename,
                     isAutoResolution = isAutoResolution,
+                    isLongYouTubeHdEnabled = isLongYouTubeHdEnabled,
                     onChangeResolution = { res -> viewModel.changeMediaResolution(res) },
                     onChangeAudioTrack = { trackId -> viewModel.selectAudioTrack(trackId) },
                     onDownloadClick = { type, customName -> viewModel.startDownload(type, customName) },

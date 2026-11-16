@@ -38,8 +38,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     private val apiService = TikTokApiService()
     private val historyRepository = HistoryRepository(application)
-    val downloadManager = DownloadManager(application, historyRepository)
     val settingsManager = SettingsManager(application)
+    val downloadManager = DownloadManager(application, historyRepository, settingsManager)
     val appLanguage: StateFlow<String> = settingsManager.appLanguage
     fun setAppLanguage(lang: String) = settingsManager.setAppLanguage(lang)
     private val updateChecker = UpdateChecker()
