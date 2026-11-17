@@ -18,6 +18,9 @@ android {
         vectorDrawables {
             useSupportLibrary = true
         }
+        ndk {
+            abiFilters.addAll(setOf("x86", "x86_64", "armeabi-v7a", "arm64-v8a"))
+        }
     }
 
     signingConfigs {
@@ -64,7 +67,7 @@ android {
     applicationVariants.all {
         val variant = this
         outputs.all {
-            (this as? com.android.build.gradle.internal.api.BaseVariantOutputImpl)?.outputFileName = "LibreTok-v${variant.versionName}.apk"
+            (this as? com.android.build.gradle.internal.api.BaseVariantOutputImpl)?.outputFileName = "LibreDownloader-v${variant.versionName}.apk"
         }
     }
     composeOptions {
@@ -74,10 +77,16 @@ android {
         resources {
             excludes += "/META-INF/{AL2.0,LGPL2.1}"
         }
+        jniLibs {
+            useLegacyPackaging = true
+        }
     }
     lint {
         checkReleaseBuilds = false
         abortOnError = false
+    }
+    testOptions {
+        unitTests.isReturnDefaultValues = true
     }
 }
 
@@ -112,6 +121,10 @@ dependencies {
 
     // Coroutines
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.0")
+
+    // yt-dlp & FFmpeg for on-device downloading & muxing
+    implementation("io.github.junkfood02.youtubedl-android:library:0.18.1")
+    implementation("io.github.junkfood02.youtubedl-android:ffmpeg:0.18.1")
 
     testImplementation("junit:junit:4.13.2")
     testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.8.0")

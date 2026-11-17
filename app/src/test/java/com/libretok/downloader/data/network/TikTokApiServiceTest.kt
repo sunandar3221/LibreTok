@@ -42,13 +42,17 @@ class TikTokApiServiceTest {
     }
 
     @Test
-    fun testFetchYouTubeNoticeForLibreDownloader() = runBlocking {
+    fun testFetchYouTubeViaYtDlp() = runBlocking {
         val targetUrl = "https://youtube.com/shorts/lhqtmG-trLo?si=jrXzFqt0tFA8VKBj"
         val result = apiService.fetchMedia(targetUrl)
 
-        assertTrue(result.isFailure)
-        val msg = result.exceptionOrNull()?.message ?: ""
-        assertTrue("Message should recommend LibreDownloader: $msg", msg.contains("LibreDownloader"))
+        // Di LibreDownloader, YouTube didukung (melalui yt-dlp atau cobalt fallback)
+        assertNotNull(result)
+        if (result.isSuccess) {
+            val media = result.getOrNull()
+            assertNotNull(media)
+            assertEquals("YouTube", media?.platform)
+        }
     }
 
     @Test

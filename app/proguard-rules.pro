@@ -48,6 +48,14 @@
 # Keep all enums safe from R8 minification
 -keepclassmembers enum * { *; }
 
+# youtubedl-android & FFmpeg
+-keep class com.yausername.youtubedl_android.** { *; }
+-keep class io.github.junkfood02.youtubedl_android.** { *; }
+-keep class com.yausername.ffmpeg.** { *; }
+-dontwarn com.yausername.youtubedl_android.**
+-dontwarn io.github.junkfood02.youtubedl_android.**
+-dontwarn com.yausername.ffmpeg.**
+
 # Keep LibreTokApp and MainActivity
 -keep class com.libretok.downloader.LibreTokApp { *; }
 -keep class com.libretok.downloader.MainActivity { *; }

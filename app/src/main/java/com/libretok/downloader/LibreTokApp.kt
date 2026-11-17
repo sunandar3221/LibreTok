@@ -6,8 +6,20 @@ import coil.ImageLoaderFactory
 import coil.disk.DiskCache
 import coil.memory.MemoryCache
 import coil.request.CachePolicy
+import com.libretok.downloader.data.network.YtDlpHelper
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 
 class LibreTokApp : Application(), ImageLoaderFactory {
+
+    override fun onCreate() {
+        super.onCreate()
+        // Inisialisasi yt-dlp & FFmpeg di background thread agar startup aplikasi tetap instan
+        CoroutineScope(Dispatchers.IO).launch {
+            YtDlpHelper.init(this@LibreTokApp)
+        }
+    }
 
     override fun newImageLoader(): ImageLoader {
         return ImageLoader.Builder(this)

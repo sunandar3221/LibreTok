@@ -83,6 +83,15 @@ class DownloadManager(
             return@withContext slideshowResult
         }
 
+        // Jika platform bukan TikTok (YouTube, Instagram, Facebook, Twitter, dll.) atau format didukung yt-dlp,
+        // unduh langsung dengan mesin on-device yt-dlp & FFmpeg
+        if (media.platform != "TikTok" || media.videoUrl == media.originalUrl) {
+            val ytDlpResult = downloadWithYtDlp(media, type, customFileName, downloadId)
+            if (ytDlpResult.isSuccess || type == DownloadType.HD_VIDEO || media.platform != "TikTok") {
+                return@withContext ytDlpResult
+            }
+        }
+
         // Jika adaptive stream (seperti YouTube 1080p/720p/480p), unduh video + audio lalu gabungkan dengan MediaMuxer
         val isAdaptiveDownload = (type == DownloadType.HD_VIDEO || (type == DownloadType.VIDEO && media.isAdaptiveStream)) &&
                 !media.musicUrl.isNullOrBlank() &&
@@ -1264,8 +1273,233 @@ class DownloadManager(
         return totalCopied
     }
 
+    private fun saveSourceFileToStorage(
+        sourceFile: File,
+        fileName: String,
+        mimeType: String,
+        type: DownloadType
+    ): Pair<Uri?, File> {
+        val appDirName = "LibreDownloader"
+        val subDir = if (type == DownloadType.AUDIO) Environment.DIRECTORY_MUSIC
+        else if (type == DownloadType.PHOTO) Environment.DIRECTORY_PICTURES
+        else Environment.DIRECTORY_MOVIES
+
+        val collectionUri = if (type == DownloadType.AUDIO) {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) MediaStore.Audio.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY)
+            else MediaStore.Audio.Media.EXTERNAL_CONTENT_URI
+        } else {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) MediaStore.Video.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY)
+            else MediaStore.Video.Media.EXTERNAL_CONTENT_URI
+        }
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            val contentValues = ContentValues().apply {
+                put(MediaStore.MediaColumns.DISPLAY_NAME, fileName)
+                put(MediaStore.MediaColumns.MIME_TYPE, mimeType)
+                put(MediaStore.MediaColumns.RELATIVE_PATH, "$subDir/$appDirName")
+                put(MediaStore.MediaColumns.IS_PENDING, 1)
+            }
+
+            val uri = context.contentResolver.insert(collectionUri, contentValues)
+                ?: throw Exception("Gagal membuat entri penyimpanan MediaStore")
+
+            context.contentResolver.openOutputStream(uri).use { outStream ->
+                if (outStream == null) throw Exception("Gagal membuka stream output MediaStore")
+                FileInputStream(sourceFile).use { inStream ->
+                    inStream.copyTo(outStream)
+                }
+            }
+
+            contentValues.clear()
+            contentValues.put(MediaStore.MediaColumns.IS_PENDING, 0)
+            context.contentResolver.update(uri, contentValues, null, null)
+
+            val fallbackFile = File(
+                Environment.getExternalStoragePublicDirectory(subDir),
+                "$appDirName/$fileName"
+            )
+            return Pair(uri, fallbackFile)
+        } else {
+            val publicDir = File(
+                Environment.getExternalStoragePublicDirectory(subDir),
+                appDirName
+            )
+            if (!publicDir.exists()) publicDir.mkdirs()
+
+            val file = File(publicDir, fileName)
+            FileInputStream(sourceFile).use { inStream ->
+                FileOutputStream(file).use { outStream ->
+                    inStream.copyTo(outStream)
+                }
+            }
+            return Pair(Uri.fromFile(file), file)
+        }
+    }
+
+    private suspend fun downloadWithYtDlp(
+        media: TikTokMedia,
+        type: DownloadType,
+        customFileName: String?,
+        downloadId: String
+    ): Result<DownloadItem> = withContext(Dispatchers.IO) {
+        val tempDir = File(context.cacheDir, "ytdlp_downloads").apply { mkdirs() }
+        val outputTemplate = File(tempDir, "${downloadId}.%(ext)s").absolutePath
+
+        val request = com.yausername.youtubedl_android.YoutubeDLRequest(media.originalUrl).apply {
+            addOption("-o", outputTemplate)
+            addOption("--no-playlist")
+            addOption("--no-mtime")
+            addOption("--socket-timeout", "30")
+        }
+
+        when (type) {
+            DownloadType.AUDIO -> {
+                request.addOption("-x")
+                request.addOption("--audio-format", "mp3")
+                request.addOption("--audio-quality", "0")
+            }
+            DownloadType.HD_VIDEO, DownloadType.VIDEO -> {
+                val targetHeight = media.selectedQuality.replace("p", "").toIntOrNull()
+                if (targetHeight != null && targetHeight > 0) {
+                    request.addOption(
+                        "-f",
+                        "bestvideo[height<=${targetHeight}][ext=mp4]+bestaudio[ext=m4a]/bestvideo[height<=${targetHeight}]+bestaudio/best[height<=${targetHeight}]/best"
+                    )
+                } else {
+                    request.addOption(
+                        "-f",
+                        "bestvideo[ext=mp4]+bestaudio[ext=m4a]/bestvideo+bestaudio/best"
+                    )
+                }
+                request.addOption("--merge-output-format", "mp4")
+            }
+            DownloadType.PHOTO -> {
+                // PHOTO ditangani oleh downloadPhotos
+            }
+        }
+
+        updateActiveDownload(
+            ActiveDownload(
+                id = downloadId,
+                title = media.title,
+                type = type,
+                progress = 0.05f,
+                status = DownloadStatus.DOWNLOADING
+            )
+        )
+
+        try {
+            com.yausername.youtubedl_android.YoutubeDL.getInstance().execute(request, downloadId) { progress, _, _ ->
+                if (cancelledTasks[downloadId] == true) {
+                    try {
+                        com.yausername.youtubedl_android.YoutubeDL.getInstance().destroyProcessById(downloadId)
+                    } catch (_: Exception) {}
+                    return@execute
+                }
+                val currentProgress = (progress / 100f).coerceIn(0f, 1f)
+                val estTotal = if (media.sizeBytes > 0) media.sizeBytes else 20_000_000L
+                updateActiveDownload(
+                    ActiveDownload(
+                        id = downloadId,
+                        title = media.title,
+                        type = type,
+                        progress = currentProgress,
+                        bytesDownloaded = (currentProgress * estTotal).toLong(),
+                        totalBytes = estTotal,
+                        status = DownloadStatus.DOWNLOADING
+                    )
+                )
+            }
+
+            if (cancelledTasks[downloadId] == true) {
+                cancelledTasks.remove(downloadId)
+                removeActiveDownload(downloadId)
+                tempDir.listFiles()?.filter { it.name.startsWith(downloadId) }?.forEach {
+                    try { it.delete() } catch (_: Exception) {}
+                }
+                return@withContext Result.failure(Exception("Unduhan dibatalkan"))
+            }
+
+            // Temukan file yang dihasilkan
+            val generatedFile = tempDir.listFiles()?.firstOrNull { it.name.startsWith(downloadId) }
+                ?: throw Exception("Berkas hasil unduhan yt-dlp tidak ditemukan.")
+
+            val ext = generatedFile.extension.ifBlank { if (type == DownloadType.AUDIO) "mp3" else "mp4" }
+            val mimeType = if (type == DownloadType.AUDIO) "audio/mpeg" else "video/mp4"
+            val baseTitle = if (!customFileName.isNullOrBlank()) {
+                sanitizeFilename(customFileName)
+            } else {
+                sanitizeFilename(media.title.ifBlank { "Libre_${media.platform}_${media.id}" })
+            }
+            val fileName = "Libre_${baseTitle}_${System.currentTimeMillis()}.$ext"
+
+            val (savedUri, savedFile) = saveSourceFileToStorage(
+                sourceFile = generatedFile,
+                fileName = fileName,
+                mimeType = mimeType,
+                type = type
+            )
+
+            // Hapus berkas temporary di cache
+            try { generatedFile.delete() } catch (_: Exception) {}
+
+            val downloadItem = DownloadItem(
+                id = downloadId,
+                title = media.title,
+                author = if (media.authorUsername.isNotBlank()) "${media.authorName} (@${media.authorUsername})" else media.authorName,
+                thumbnailUri = media.coverUrl,
+                filePath = savedFile.absolutePath,
+                fileUri = savedUri?.toString() ?: "",
+                type = type,
+                fileSizeBytes = savedFile.length(),
+                durationSeconds = media.duration,
+                timestamp = System.currentTimeMillis(),
+                sourceUrl = media.originalUrl
+            )
+
+            updateActiveDownload(
+                ActiveDownload(
+                    id = downloadId,
+                    title = media.title,
+                    type = type,
+                    progress = 1f,
+                    bytesDownloaded = savedFile.length(),
+                    totalBytes = savedFile.length(),
+                    status = DownloadStatus.COMPLETED
+                )
+            )
+
+            historyRepository.addItem(downloadItem)
+            removeActiveDownload(downloadId)
+            Result.success(downloadItem)
+        } catch (e: Exception) {
+            tempDir.listFiles()?.filter { it.name.startsWith(downloadId) }?.forEach {
+                try { it.delete() } catch (_: Exception) {}
+            }
+            if (cancelledTasks[downloadId] == true) {
+                cancelledTasks.remove(downloadId)
+                removeActiveDownload(downloadId)
+                return@withContext Result.failure(Exception("Unduhan dibatalkan"))
+            }
+            updateActiveDownload(
+                ActiveDownload(
+                    id = downloadId,
+                    title = media.title,
+                    type = type,
+                    progress = 0f,
+                    status = DownloadStatus.FAILED,
+                    errorMessage = e.message ?: "Gagal mengunduh dengan yt-dlp"
+                )
+            )
+            Result.failure(e)
+        }
+    }
+
     fun cancelDownload(downloadId: String) {
         cancelledTasks[downloadId] = true
+        try {
+            com.yausername.youtubedl_android.YoutubeDL.getInstance().destroyProcessById(downloadId)
+        } catch (_: Exception) {}
         removeActiveDownload(downloadId)
     }
 

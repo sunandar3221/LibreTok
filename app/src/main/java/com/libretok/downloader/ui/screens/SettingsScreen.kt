@@ -28,6 +28,7 @@ import com.libretok.downloader.ui.localization.LocalAppStrings
 import com.libretok.downloader.ui.theme.TikTokCyan
 import com.libretok.downloader.ui.theme.TikTokPink
 import com.libretok.downloader.ui.viewmodel.MainViewModel
+import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -48,6 +49,11 @@ fun SettingsScreen(
 
     var showLanguagePicker by remember { mutableStateOf(false) }
     var showResolutionPicker by remember { mutableStateOf(false) }
+
+    var ytdlpVersion by remember { mutableStateOf(com.libretok.downloader.data.network.YtDlpHelper.getVersion(context)) }
+    var isUpdatingYtDlp by remember { mutableStateOf(false) }
+    var ytdlpUpdateMessage by remember { mutableStateOf<String?>(null) }
+    val coroutineScope = rememberCoroutineScope()
 
     fun openUrl(url: String) {
         val intent = Intent(Intent.ACTION_VIEW, Uri.parse(url))
@@ -245,11 +251,32 @@ fun SettingsScreen(
 
                         SettingsClickableRow(
                             icon = Icons.Default.DownloadForOffline,
-                            title = "LibreDownloader (yt-dlp Lengkap)",
-                            value = "Unduh YouTube, Instagram, FB, dll.",
-                            actionHint = "Buka",
-                            onClick = { openUrl("https://github.com/sunandar3221/LibreTok/tree/libredownloader") }
+                            title = "Mesin yt-dlp (On-Device)",
+                            value = if (isUpdatingYtDlp) "Memperbarui mesin..." else "Versi: $ytdlpVersion",
+                            actionHint = if (isUpdatingYtDlp) "Memproses..." else "Perbarui Mesin",
+                            onClick = {
+                                if (!isUpdatingYtDlp) {
+                                    isUpdatingYtDlp = true
+                                    ytdlpUpdateMessage = "Memeriksa pembaruan yt-dlp..."
+                                    coroutineScope.launch {
+                                        val result = com.libretok.downloader.data.network.YtDlpHelper.update(context)
+                                        isUpdatingYtDlp = false
+                                        ytdlpVersion = com.libretok.downloader.data.network.YtDlpHelper.getVersion(context)
+                                        ytdlpUpdateMessage = result.getOrNull() ?: result.exceptionOrNull()?.message
+                                    }
+                                }
+                            }
                         )
+
+                        if (ytdlpUpdateMessage != null) {
+                            Spacer(modifier = Modifier.height(6.dp))
+                            Text(
+                                text = ytdlpUpdateMessage!!,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = TikTokCyan,
+                                modifier = Modifier.padding(start = 38.dp)
+                            )
+                        }
                     }
                 }
             }
@@ -432,19 +459,19 @@ fun SettingsScreen(
                         SettingsInfoRow(
                             icon = Icons.Default.Movie,
                             title = strings.folderVideo,
-                            value = "Movies > LibreTok"
+                            value = "Movies > LibreDownloader"
                         )
                         HorizontalDivider(modifier = Modifier.padding(vertical = 12.dp))
                         SettingsInfoRow(
                             icon = Icons.Default.MusicNote,
                             title = strings.folderAudio,
-                            value = "Music > LibreTok"
+                            value = "Music > LibreDownloader"
                         )
                         HorizontalDivider(modifier = Modifier.padding(vertical = 12.dp))
                         SettingsInfoRow(
                             icon = Icons.Default.PhotoLibrary,
                             title = strings.folderPhoto,
-                            value = "Pictures > LibreTok"
+                            value = "Pictures > LibreDownloader"
                         )
                     }
                 }
@@ -471,7 +498,7 @@ fun SettingsScreen(
                         SettingsInfoRow(
                             icon = Icons.Default.Info,
                             title = strings.appVersion,
-                            value = "LibreTok v${BuildConfig.VERSION_NAME} (Signed Release)"
+                            value = "LibreDownloader v${BuildConfig.VERSION_NAME} (with yt-dlp & FFmpeg)"
                         )
                         HorizontalDivider(modifier = Modifier.padding(vertical = 12.dp))
                         SettingsInfoRow(

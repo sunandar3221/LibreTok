@@ -105,7 +105,7 @@ fun HomeScreen(
                         modifier = Modifier.fillMaxWidth()
                     ) {
                         Text(
-                            text = "LibreTok",
+                            text = "LibreDownloader",
                             style = MaterialTheme.typography.headlineMedium,
                             fontWeight = FontWeight.ExtraBold
                         )
@@ -635,56 +635,6 @@ fun HomeScreen(
                         title = strings.step3Title,
                         desc = strings.step3Desc
                     )
-                }
-            }
-        }
-
-        // LibreDownloader Promo Card
-        item(key = "libredownloader_promo") {
-            Card(
-                modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(16.dp),
-                colors = CardDefaults.cardColors(
-                    containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.5f)
-                ),
-                border = androidx.compose.foundation.BorderStroke(
-                    1.dp,
-                    MaterialTheme.colorScheme.primary.copy(alpha = 0.3f)
-                )
-            ) {
-                Column(modifier = Modifier.padding(16.dp)) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Icon(
-                            imageVector = Icons.Default.DownloadForOffline,
-                            contentDescription = null,
-                            tint = MaterialTheme.colorScheme.primary,
-                            modifier = Modifier.size(24.dp)
-                        )
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Text(
-                            text = "Butuh Unduh YouTube & Lainnya?",
-                            style = MaterialTheme.typography.titleMedium,
-                            fontWeight = FontWeight.Bold
-                        )
-                    }
-                    Spacer(modifier = Modifier.height(6.dp))
-                    Text(
-                        text = "LibreTok dikhususkan untuk TikTok. Untuk mengunduh video dari YouTube (termasuk Full HD panjang), Instagram, dan platform lainnya dengan mesin yt-dlp di dalam HP, silakan gunakan LibreDownloader!",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                    Spacer(modifier = Modifier.height(10.dp))
-                    FilledTonalButton(
-                        onClick = {
-                            val intent = Intent(Intent.ACTION_VIEW, Uri.parse("https://github.com/sunandar3221/LibreTok/tree/libredownloader"))
-                            context.startActivity(intent)
-                        },
-                        shape = RoundedCornerShape(10.dp)
-                    ) {
-                        Text("Dapatkan LibreDownloader", fontWeight = FontWeight.SemiBold)
-                        Spacer(modifier = Modifier.width(6.dp))
-                        Icon(imageVector = Icons.AutoMirrored.Filled.OpenInNew, contentDescription = null, modifier = Modifier.size(16.dp))
-                    }
                 }
             }
         }

@@ -226,7 +226,13 @@ class TikTokApiService(
                 }
             }
 
-            // Fallback to Cobalt if TikWM fails
+            // Fallback 3: Gunakan mesin on-device yt-dlp
+            val ytDlpResult = YtDlpHelper.fetchMedia(cleanUrl)
+            if (ytDlpResult.isSuccess) {
+                return@withContext ytDlpResult
+            }
+
+            // Fallback 4: Cobalt jika ada
             val cobaltResult = fetchCobalt(cleanUrl, platform, cleanQuality)
             if (cobaltResult.isSuccess) {
                 return@withContext cobaltResult
@@ -235,10 +241,36 @@ class TikTokApiService(
                 Exception("Video TikTok tidak dapat ditemukan. Pastikan tautan benar dan video bersifat publik.")
             )
         } else {
-            // LibreTok dikhususkan untuk TikTok. Untuk YouTube, Instagram, dll., gunakan LibreDownloader
-            return@withContext Result.failure(
-                Exception("LibreTok dikhususkan untuk unduhan TikTok. Untuk mengunduh dari $platform (termasuk YouTube Full HD & Instagram), silakan gunakan LibreDownloader!")
-            )
+            // Untuk YouTube, Instagram, Facebook, Twitter/X, dll.:
+            // Gunakan mesin on-device yt-dlp
+            var ytDlpResult = YtDlpHelper.fetchMedia(extracted)
+            if (ytDlpResult.isSuccess) {
+                return@withContext ytDlpResult
+            }
+
+            // Jika URL berupa shortlink (misal youtu.be, bit.ly, ig.me), coba resolve redirect
+            val resolved = resolveRedirectUrl(extracted)
+            val cleanUrl = cleanMediaUrl(resolved)
+            if (cleanUrl != extracted) {
+                ytDlpResult = YtDlpHelper.fetchMedia(cleanUrl)
+                if (ytDlpResult.isSuccess) {
+                    return@withContext ytDlpResult
+                }
+            }
+            if (resolved != extracted && resolved != cleanUrl) {
+                ytDlpResult = YtDlpHelper.fetchMedia(resolved)
+                if (ytDlpResult.isSuccess) {
+                    return@withContext ytDlpResult
+                }
+            }
+
+            // Fallback cadangan ke Cobalt jika yt-dlp mengalami kendala jaringan lokal
+            val cobaltResult = fetchCobalt(cleanUrl, platform, cleanQuality)
+            if (cobaltResult.isSuccess) {
+                return@withContext cobaltResult
+            }
+
+            return@withContext ytDlpResult
         }
     }
 
