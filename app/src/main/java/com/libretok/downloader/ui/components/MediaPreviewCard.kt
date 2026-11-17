@@ -48,7 +48,6 @@ fun MediaPreviewCard(
     activeDownloads: Map<String, ActiveDownload>,
     askRename: Boolean = false,
     isAutoResolution: Boolean = true,
-    isLongYouTubeHdEnabled: Boolean = false,
     onChangeResolution: (String) -> Unit = {},
     onChangeAudioTrack: (String) -> Unit = {},
     onDownloadClick: (DownloadType, String?) -> Unit,
@@ -682,7 +681,6 @@ fun MediaPreviewCard(
 
                 // Button 2: Download HD Video (if available dan bukan postingan foto)
                 if (!media.hdVideoUrl.isNullOrBlank() && media.images.isEmpty()) {
-                    val isLongYouTube = media.platform == "YouTube" && (media.duration ?: 0) > 65
                     FilledTonalButton(
                         onClick = { triggerDownload(DownloadType.HD_VIDEO) },
                         enabled = !isAnyDownloading,
@@ -706,31 +704,11 @@ fun MediaPreviewCard(
                         } else {
                             Icon(imageVector = Icons.Default.HighQuality, contentDescription = null)
                             Spacer(modifier = Modifier.width(8.dp))
-                            val buttonText = when {
-                                !isLongYouTube -> "${strings.btnDownloadVideo} (Full HD)"
-                                isLongYouTubeHdEnabled -> "${strings.btnDownloadVideo} (Full HD - Parser Aktif)"
-                                else -> "${strings.btnDownloadVideo} HD (Perlu Pengaturan)"
-                            }
                             Text(
-                                text = buttonText,
+                                text = "${strings.btnDownloadVideo} (Full HD)",
                                 fontWeight = FontWeight.SemiBold
                             )
                         }
-                    }
-
-                    if (isLongYouTube) {
-                        val noteText = if (isLongYouTubeHdEnabled) {
-                            "✨ Parser YouTube aktif: video HD akan diekstrak menggunakan parser sebelum pengunduhan."
-                        } else {
-                            "ℹ️ Video YouTube > 1 menit dibatasi YouTube. Buka Pengaturan untuk mengaktifkan parser eksperimental, atau gunakan tombol 'Download Video' standar di atas."
-                        }
-                        Text(
-                            text = noteText,
-                            style = MaterialTheme.typography.bodySmall,
-                            color = if (isLongYouTubeHdEnabled) TikTokCyan else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.8f),
-                            fontSize = 11.sp,
-                            modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp)
-                        )
                     }
                 }
 

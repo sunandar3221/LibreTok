@@ -234,48 +234,11 @@ class TikTokApiService(
             return@withContext Result.failure(
                 Exception("Video TikTok tidak dapat ditemukan. Pastikan tautan benar dan video bersifat publik.")
             )
-        } else if (platform == "YouTube") {
-            val resolved = resolveRedirectUrl(extracted)
-            val cleanUrl = cleanMediaUrl(resolved)
-
-            // 1. Coba YouTube Innertube player API langsung (cepat, stabil, tanpa blokir bot datacenter)
-            val innertubeResult = fetchYouTubeInnertube(cleanUrl, resolved, extracted, cleanQuality)
-            if (innertubeResult.isSuccess) {
-                return@withContext innertubeResult
-            }
-
-            // 2. Fallback ke Cobalt jika Innertube gagal
-            var cobaltResult = fetchCobalt(cleanUrl, platform, cleanQuality)
-            if (cobaltResult.isFailure && cleanUrl != resolved) {
-                cobaltResult = fetchCobalt(resolved, platform, cleanQuality)
-            }
-            if (cobaltResult.isSuccess) {
-                return@withContext cobaltResult
-            }
-
-            val errorMsg = innertubeResult.exceptionOrNull()?.message
-                ?: "Video YouTube tidak ditemukan atau dibatasi. Pastikan video masih tersedia dan bersifat publik."
-            return@withContext Result.failure(Exception(errorMsg))
         } else {
-            // Instagram, Facebook, Twitter, etc.
-            val resolved = resolveRedirectUrl(extracted)
-            val cleanUrl = cleanMediaUrl(resolved)
-
-            var cobaltResult = fetchCobalt(cleanUrl, platform, cleanQuality)
-            if (cobaltResult.isFailure && cleanUrl != resolved) {
-                cobaltResult = fetchCobalt(resolved, platform, cleanQuality)
-            }
-            if (cobaltResult.isSuccess) {
-                return@withContext cobaltResult
-            }
-
-            val friendlyMsg = when (platform) {
-                "Instagram" -> "Konten Instagram tidak dapat diakses atau akun bersifat privat. Pastikan postingan/Reel bersifat publik dan coba salin link langsung dari menu Bagikan di Instagram."
-                "Facebook" -> "Video Facebook tidak dapat diakses. Pastikan video berasal dari postingan publik (bukan grup privat)."
-                else -> "Gagal memproses tautan video dari $platform. Pastikan tautan masih aktif dan bersifat publik."
-            }
-
-            return@withContext Result.failure(Exception(friendlyMsg))
+            // LibreTok dikhususkan untuk TikTok. Untuk YouTube, Instagram, dll., gunakan LibreDownloader
+            return@withContext Result.failure(
+                Exception("LibreTok dikhususkan untuk unduhan TikTok. Untuk mengunduh dari $platform (termasuk YouTube Full HD & Instagram), silakan gunakan LibreDownloader!")
+            )
         }
     }
 

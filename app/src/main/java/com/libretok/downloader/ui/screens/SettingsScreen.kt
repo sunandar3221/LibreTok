@@ -42,16 +42,12 @@ fun SettingsScreen(
     val askRename by viewModel.settingsManager.askRenameBeforeDownload.collectAsState()
     val isAutoResolution by viewModel.settingsManager.isAutoResolution.collectAsState()
     val defaultResolution by viewModel.settingsManager.defaultResolution.collectAsState()
-    val isLongYouTubeHdEnabled by viewModel.settingsManager.isLongYouTubeHdEnabled.collectAsState()
-    val customPoTokenServer by viewModel.settingsManager.customPoTokenServer.collectAsState()
 
     val isCheckingUpdate by viewModel.isCheckingUpdate.collectAsState()
     val updateCheckMessage by viewModel.updateCheckMessage.collectAsState()
 
     var showLanguagePicker by remember { mutableStateOf(false) }
     var showResolutionPicker by remember { mutableStateOf(false) }
-    var showCustomServerDialog by remember { mutableStateOf(false) }
-    var customServerInput by remember { mutableStateOf("") }
 
     fun openUrl(url: String) {
         val intent = Intent(Intent.ACTION_VIEW, Uri.parse(url))
@@ -247,50 +243,13 @@ fun SettingsScreen(
 
                         HorizontalDivider(modifier = Modifier.padding(vertical = 12.dp))
 
-                        // Switch YouTube HD Panjang
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.Web,
-                                contentDescription = null,
-                                tint = TikTokPink,
-                                modifier = Modifier.size(24.dp)
-                            )
-                            Spacer(modifier = Modifier.width(14.dp))
-                            Column(modifier = Modifier.weight(1f)) {
-                                Text(
-                                    text = "Unduh YouTube HD Panjang",
-                                    style = MaterialTheme.typography.titleMedium,
-                                    fontWeight = FontWeight.SemiBold
-                                )
-                                Text(
-                                    text = "Gunakan Headless WebView parser lokal untuk mengunduh video YouTube HD berdurasi > 1 menit.",
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                            }
-                            Switch(
-                                checked = isLongYouTubeHdEnabled,
-                                onCheckedChange = { viewModel.settingsManager.setLongYouTubeHdEnabled(it) }
-                            )
-                        }
-
-                        if (isLongYouTubeHdEnabled) {
-                            HorizontalDivider(modifier = Modifier.padding(vertical = 12.dp))
-
-                            SettingsClickableRow(
-                                icon = Icons.Default.Dns,
-                                title = "Server PO Token Kustom (Opsional)",
-                                value = if (customPoTokenServer.isNotBlank()) customPoTokenServer else "Headless WebView Lokal",
-                                actionHint = "Atur",
-                                onClick = {
-                                    customServerInput = customPoTokenServer
-                                    showCustomServerDialog = true
-                                }
-                            )
-                        }
+                        SettingsClickableRow(
+                            icon = Icons.Default.DownloadForOffline,
+                            title = "LibreDownloader (yt-dlp Lengkap)",
+                            value = "Unduh YouTube, Instagram, FB, dll.",
+                            actionHint = "Buka",
+                            onClick = { openUrl("https://github.com/sunandar3221/LibreTok/tree/libredownloader") }
+                        )
                     }
                 }
             }
@@ -640,47 +599,6 @@ fun SettingsScreen(
             confirmButton = {
                 TextButton(onClick = { showResolutionPicker = false }) {
                     Text(strings.btnClose)
-                }
-            }
-        )
-    }
-
-    // Dialog Server PO Token Kustom
-    if (showCustomServerDialog) {
-        AlertDialog(
-            onDismissRequest = { showCustomServerDialog = false },
-            title = {
-                Text("Server PO Token Kustom", fontWeight = FontWeight.Bold)
-            },
-            text = {
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text(
-                        text = "Kosongkan untuk menggunakan Headless WebView lokal bawaan aplikasi.",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                    OutlinedTextField(
-                        value = customServerInput,
-                        onValueChange = { customServerInput = it },
-                        label = { Text("URL Server (misal: https://api.potoken.local/token)") },
-                        singleLine = true,
-                        modifier = Modifier.fillMaxWidth()
-                    )
-                }
-            },
-            confirmButton = {
-                TextButton(
-                    onClick = {
-                        viewModel.settingsManager.setCustomPoTokenServer(customServerInput)
-                        showCustomServerDialog = false
-                    }
-                ) {
-                    Text("Simpan")
-                }
-            },
-            dismissButton = {
-                TextButton(onClick = { showCustomServerDialog = false }) {
-                    Text(strings.btnCancel)
                 }
             }
         )

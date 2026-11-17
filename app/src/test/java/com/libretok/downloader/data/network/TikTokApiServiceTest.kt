@@ -42,18 +42,13 @@ class TikTokApiServiceTest {
     }
 
     @Test
-    fun testFetchYouTubeShortsLive() = runBlocking {
+    fun testFetchYouTubeNoticeForLibreDownloader() = runBlocking {
         val targetUrl = "https://youtube.com/shorts/lhqtmG-trLo?si=jrXzFqt0tFA8VKBj"
         val result = apiService.fetchMedia(targetUrl)
 
-        assertTrue("Expected fetchMedia to succeed: ${result.exceptionOrNull()?.message}", result.isSuccess)
-        val media = result.getOrNull()
-        assertNotNull(media)
-        assertEquals("YouTube", media?.platform)
-        assertEquals("lhqtmG-trLo", media?.id)
-        assertTrue("videoUrl must not be blank", media?.videoUrl?.isNotBlank() == true)
-        assertTrue("videoUrl must point to googlevideo.com", media?.videoUrl?.contains("googlevideo.com") == true)
-        assertTrue("coverUrl must not be blank", media?.coverUrl?.isNotBlank() == true)
+        assertTrue(result.isFailure)
+        val msg = result.exceptionOrNull()?.message ?: ""
+        assertTrue("Message should recommend LibreDownloader: $msg", msg.contains("LibreDownloader"))
     }
 
     @Test

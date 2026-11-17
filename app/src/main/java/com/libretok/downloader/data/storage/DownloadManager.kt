@@ -17,7 +17,6 @@ import com.libretok.downloader.data.model.DownloadItem
 import com.libretok.downloader.data.model.DownloadStatus
 import com.libretok.downloader.data.model.DownloadType
 import com.libretok.downloader.data.model.TikTokMedia
-import com.libretok.downloader.data.network.YouTubeHeadlessParser
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -53,7 +52,6 @@ class DownloadManager(
 
     private val cancelledTasks = ConcurrentHashMap<String, Boolean>()
     private val slideshowGenerator = SlideshowVideoGenerator(context, client)
-    private val headlessParser = YouTubeHeadlessParser(context, client)
 
     private fun sanitizeFilename(name: String): String {
         return name.replace(Regex("[^a-zA-Z0-9.\\-_ ]"), "_")
@@ -398,63 +396,12 @@ class DownloadManager(
         customFileName: String?,
         downloadId: String
     ): Result<DownloadItem> = withContext(Dispatchers.IO) {
-        val isLongYouTube = media.platform == "YouTube" && media.duration > 65
-        val isHeadlessEnabled = settingsManager?.isLongYouTubeHdEnabled?.value == true
-
-        var targetVideoUrl = if (type == DownloadType.HD_VIDEO && !media.hdVideoUrl.isNullOrBlank()) {
+        val targetVideoUrl = if (type == DownloadType.HD_VIDEO && !media.hdVideoUrl.isNullOrBlank()) {
             media.hdVideoUrl
         } else {
             media.videoUrl
         }
-        var targetAudioUrl = media.musicUrl ?: return@withContext Result.failure(Exception("Audio URL tidak ditemukan"))
-
-        if (isLongYouTube && type == DownloadType.HD_VIDEO) {
-            if (!isHeadlessEnabled) {
-                val msg = "YouTube membatasi unduhan HD untuk video berdurasi lebih dari 1 menit (anti-bot 403). Aktifkan 'Parser YouTube HD Panjang' di Pengaturan, atau gunakan tombol 'Download Video' standar (360p)."
-                updateActiveDownload(
-                    ActiveDownload(
-                        id = downloadId,
-                        title = media.title,
-                        type = type,
-                        status = DownloadStatus.FAILED,
-                        errorMessage = msg
-                    )
-                )
-                return@withContext Result.failure(Exception(msg))
-            } else {
-                updateActiveDownload(
-                    ActiveDownload(
-                        id = downloadId,
-                        title = media.title,
-                        type = type,
-                        progress = 0.05f,
-                        status = DownloadStatus.DOWNLOADING
-                    )
-                )
-
-                val customServer = settingsManager?.customPoTokenServer?.value?.ifBlank { null }
-                val parsed = headlessParser.extractLongVideoStreams(media.id, customServer)
-
-                if (parsed?.videoUrl != null) {
-                    targetVideoUrl = parsed.videoUrl
-                    if (!parsed.audioUrl.isNullOrBlank()) {
-                        targetAudioUrl = parsed.audioUrl
-                    }
-                } else {
-                    val msg = "Gagal mengekstrak stream YouTube HD via Parser. Silakan gunakan tombol 'Download Video' standar (360p) untuk video ini."
-                    updateActiveDownload(
-                        ActiveDownload(
-                            id = downloadId,
-                            title = media.title,
-                            type = type,
-                            status = DownloadStatus.FAILED,
-                            errorMessage = msg
-                        )
-                    )
-                    return@withContext Result.failure(Exception(msg))
-                }
-            }
-        }
+        val targetAudioUrl = media.musicUrl ?: return@withContext Result.failure(Exception("Audio URL tidak ditemukan"))
 
         val baseTitle = if (!customFileName.isNullOrBlank()) {
             sanitizeFilename(customFileName)
